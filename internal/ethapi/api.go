@@ -971,7 +971,9 @@ func (context *ChainContext) Config() *params.ChainConfig {
 func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, header *types.Header, overrides *override.StateOverride, blockOverrides *override.BlockOverrides, timeout time.Duration, globalGasCap uint64) (*core.ExecutionResult, error) {
 	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil)
 	if blockOverrides != nil {
-		blockOverrides.Apply(&blockCtx)
+		if err := blockOverrides.Apply(&blockCtx); err != nil {
+			return nil, err
+		}
 	}
 	rules := b.ChainConfig().Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time)
 	precompiles := vm.ActivePrecompiledContracts(rules)
@@ -1085,7 +1087,7 @@ func (api *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockN
 //
 // Note, this function doesn't make any changes in the state/blockchain and is
 // useful to execute and retrieve values.
-func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrOrHash *rpc.BlockNumberOrHash) ([]map[string]interface{}, error) {
+func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrOrHash *rpc.BlockNumberOrHash) ([]*simBlockResult, error) {
 	if len(opts.BlockStateCalls) == 0 {
 		return nil, &invalidParamsError{message: "empty input"}
 	} else if len(opts.BlockStateCalls) > maxSimulateBlocks {

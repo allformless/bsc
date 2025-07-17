@@ -78,9 +78,9 @@ func newChainFreezer(datadir string, namespace string, readonly bool, multiDatab
 		freezer ethdb.AncientStore
 	)
 	if datadir == "" {
-		freezer = NewMemoryFreezer(readonly, chainFreezerNoSnappy)
+		freezer = NewMemoryFreezer(readonly, chainFreezerTableConfigs)
 	} else {
-		freezer, err = NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerNoSnappy)
+		freezer, err = NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerTableConfigs)
 	}
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func resetFreezerMeta(datadir string, namespace string, legacyOffset uint64) err
 		return nil
 	}
 
-	freezer, err := NewFreezer(datadir, namespace, false, freezerTableSize, chainFreezerNoSnappy)
+	freezer, err := NewFreezer(datadir, namespace, false, freezerTableSize, chainFreezerTableConfigs)
 	if err != nil {
 		return err
 	}

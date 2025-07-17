@@ -652,6 +652,33 @@ func testSendTransactionConditional(t *testing.T, client *rpc.Client) {
 	if gas != 21000 {
 		t.Fatalf("unexpected gas limit: %v", gas)
 	}
+	// Use HeaderByNumber to get a header for EstimateGasAtBlock and EstimateGasAtBlockHash
+	latestHeader, err := ec.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// EstimateGasAtBlock
+	msg := ethereum.CallMsg{
+		From:  testAddr,
+		To:    &common.Address{},
+		Gas:   21000,
+		Value: big.NewInt(1),
+	}
+	gas, err := ec.EstimateGasAtBlock(context.Background(), msg, latestHeader.Number)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gas != 21000 {
+		t.Fatalf("unexpected gas limit: %v", gas)
+	}
+	// EstimateGasAtBlockHash
+	gas, err = ec.EstimateGasAtBlockHash(context.Background(), msg, latestHeader.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gas != 21000 {
+		t.Fatalf("unexpected gas limit: %v", gas)
+	}
 }
 
 func sendTransactionConditional(ec *ethclient.Client) error {

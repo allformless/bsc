@@ -108,6 +108,10 @@ var (
 		utils.TxLookupLimitFlag, // deprecated
 		utils.TransactionHistoryFlag,
 		utils.BlockHistoryFlag,
+		// utils.ChainHistoryFlag,
+		utils.LogHistoryFlag,
+		utils.LogNoHistoryFlag,
+		utils.LogExportCheckpointsFlag,
 		utils.StateHistoryFlag,
 		utils.PathDBSyncFlag,
 		utils.JournalFileFlag,
@@ -271,6 +275,7 @@ func init() {
 		dumpCommand,
 		dumpGenesisCommand,
 		dumpRootHashCommand,
+		// pruneCommand,
 		// See accountcmd.go:
 		accountCommand,
 		walletCommand,
