@@ -55,7 +55,7 @@ func (info *freezerInfo) size() common.StorageSize {
 	return total
 }
 
-func inspect(name string, order map[string]bool, reader ethdb.AncientReader) (freezerInfo, error) {
+func inspect(name string, order map[string]freezerTableConfig, reader ethdb.AncientReader) (freezerInfo, error) {
 	info := freezerInfo{name: name}
 	for t := range order {
 		size, err := reader.AncientSize(t)
@@ -86,7 +86,7 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 	for _, freezer := range freezers {
 		switch freezer {
 		case ChainFreezerName:
-			info, err := inspect(ChainFreezerName, chainFreezerNoSnappy, db)
+			info, err := inspect(ChainFreezerName, chainFreezerTableConfigs, db)
 			if err != nil {
 				return nil, err
 			}
@@ -119,7 +119,7 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			}
 			defer f.Close()
 
-			info, err := inspect(freezer, stateFreezerNoSnappy, f)
+			info, err := inspect(freezer, stateFreezerTableConfigs, f)
 			if err != nil {
 				return nil, err
 			}
@@ -139,21 +139,21 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 func InspectFreezerTable(ancient string, freezerName string, tableName string, start, end int64, multiDatabase bool) error {
 	var (
 		path   string
-		tables map[string]bool
+		tables map[string]freezerTableConfig
 	)
 	switch freezerName {
 	case ChainFreezerName:
 		if multiDatabase {
-			path, tables = resolveChainFreezerDir(filepath.Dir(ancient)+"/block/ancient"), chainFreezerNoSnappy
+			path, tables = resolveChainFreezerDir(filepath.Dir(ancient)+"/block/ancient"), chainFreezerTableConfigs
 		} else {
-			path, tables = resolveChainFreezerDir(ancient), chainFreezerNoSnappy
+			path, tables = resolveChainFreezerDir(ancient), stateFreezerTableConfigs
 		}
 
 	case MerkleStateFreezerName, VerkleStateFreezerName:
 		if multiDatabase {
-			path, tables = filepath.Join(filepath.Dir(ancient)+"/state/ancient", freezerName), stateFreezerNoSnappy
+			path, tables = filepath.Join(filepath.Dir(ancient)+"/state/ancient", freezerName), stateFreezerTableConfigs
 		} else {
-			path, tables = filepath.Join(ancient, freezerName), stateFreezerNoSnappy
+			path, tables = filepath.Join(ancient, freezerName), stateFreezerTableConfigs
 		}
 	default:
 		return fmt.Errorf("unknown freezer, supported ones: %v", freezers)
@@ -175,11 +175,11 @@ func InspectFreezerTable(ancient string, freezerName string, tableName string, s
 }
 
 func ResetStateFreezerTableOffset(ancient string, virtualTail uint64) error {
-	path, tables := filepath.Join(ancient, MerkleStateFreezerName), stateFreezerNoSnappy
+	path, tables := filepath.Join(ancient, MerkleStateFreezerName), stateFreezerTableConfigs
 
-	for name, disableSnappy := range tables {
-		log.Info("Handle table", "name", name, "disableSnappy", disableSnappy)
-		table, err := newTable(path, name, metrics.NewInactiveMeter(), metrics.NewInactiveMeter(), metrics.NewGauge(), freezerTableSize, disableSnappy, false)
+	for name, config := range tables {
+		log.Info("Handle table", "name", name, "config", config)
+		table, err := newTable(path, name, metrics.NewInactiveMeter(), metrics.NewInactiveMeter(), metrics.NewGauge(), freezerTableSize, config, false)
 		if err != nil {
 			log.Error("New table failed", "error", err)
 			return err

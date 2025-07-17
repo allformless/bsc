@@ -33,19 +33,6 @@ import (
 	"github.com/holiman/uint256"
 )
 
-type account struct{}
-
-func (account) SubBalance(amount *big.Int)                          {}
-func (account) AddBalance(amount *big.Int)                          {}
-func (account) SetAddress(common.Address)                           {}
-func (account) Value() *big.Int                                     { return nil }
-func (account) SetBalance(*uint256.Int)                             {}
-func (account) SetNonce(uint64)                                     {}
-func (account) Balance() *uint256.Int                               { return nil }
-func (account) Address() common.Address                             { return common.Address{} }
-func (account) SetCode(common.Hash, []byte)                         {}
-func (account) ForEachStorage(cb func(key, value common.Hash) bool) {}
-
 type dummyStatedb struct {
 	state.StateDB
 }
@@ -68,7 +55,7 @@ func runTrace(tracer *tracers.Tracer, vmctx *vmContext, chaincfg *params.ChainCo
 		gasLimit uint64 = 31000
 		startGas uint64 = 10000
 		value           = uint256.NewInt(0)
-		contract        = vm.GetContract(account{}, account{}, value, startGas)
+		contract        = vm.GetContract(common.Address{}, common.Address{}, value, startGas, nil)
 	)
 	defer vm.ReturnContract(contract)
 
@@ -192,7 +179,7 @@ func TestHaltBetweenSteps(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := &vm.ScopeContext{
-		Contract: vm.GetContract(&account{}, &account{}, uint256.NewInt(0), 0),
+		Contract: vm.GetContract(common.Address{}, common.Address{}, uint256.NewInt(0), 0, nil),
 	}
 	defer vm.ReturnContract(scope.Contract)
 	evm := vm.NewEVM(vm.BlockContext{BlockNumber: big.NewInt(1)}, &dummyStatedb{}, chainConfig, vm.Config{Tracer: tracer.Hooks})
@@ -290,11 +277,10 @@ func TestEnterExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contract := vm.GetContract(&account{}, &account{}, uint256.NewInt(0), 0)
-	defer vm.ReturnContract(contract)
 	scope := &vm.ScopeContext{
-		Contract: contract,
+		Contract: vm.GetContract(common.Address{}, common.Address{}, uint256.NewInt(0), 0, nil),
 	}
+	defer vm.ReturnContract(scope.contract)
 
 	tracer.OnEnter(1, byte(vm.CALL), scope.Contract.Caller(), scope.Contract.Address(), []byte{}, 1000, new(big.Int))
 	tracer.OnExit(1, []byte{}, 400, nil, false)

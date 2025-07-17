@@ -177,6 +177,7 @@ var (
 		Usage:    "Chapel network: pre-configured Proof-of-Stake-Authority BSC test network",
 		Category: flags.EthCategory,
 	}
+	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
 		Name:     "dev",
 		Usage:    "Ephemeral proof-of-authority network with a pre-funded developer account, mining enabled",
@@ -369,7 +370,7 @@ var (
 	}
 	StateHistoryFlag = &cli.Uint64Flag{
 		Name:     "history.state",
-		Usage:    "Number of recent blocks to retain state history for (default = 90,000 blocks, 0 = entire chain)",
+		Usage:    "Number of recent blocks to retain state history for, only relevant in state.scheme=path (default = 90,000 blocks, 0 = entire chain)",
 		Value:    ethconfig.Defaults.StateHistory,
 		Category: flags.StateCategory,
 	}
@@ -384,6 +385,29 @@ var (
 		Usage:    "Number of recent blocks to maintain in DB (default = 0, 0 = entire chain). Pruning is not involving TxIndex/bloomIndex.",
 		Value:    ethconfig.Defaults.BlockHistory,
 		Category: flags.BlockHistoryCategory,
+	}
+	ChainHistoryFlag = &cli.StringFlag{
+		Name:     "history.chain",
+		Usage:    `Blockchain history retention ("all" or "postmerge")`,
+		Value:    ethconfig.Defaults.HistoryMode.String(),
+		Category: flags.StateCategory,
+	}
+	LogHistoryFlag = &cli.Uint64Flag{
+		Name:     "history.logs",
+		Usage:    "Number of recent blocks to maintain log search index for (default = about one year, 0 = entire chain)",
+		Value:    ethconfig.Defaults.LogHistory,
+		Category: flags.StateCategory,
+	}
+	LogNoHistoryFlag = &cli.BoolFlag{
+		Name:     "history.logs.disable",
+		Usage:    "Do not maintain log search index",
+		Category: flags.StateCategory,
+	}
+	LogExportCheckpointsFlag = &cli.StringFlag{
+		Name:     "history.logs.export",
+		Usage:    "Export checkpoints to file in go source file format",
+		Category: flags.StateCategory,
+		Value:    "",
 	}
 	// Beacon client light sync settings
 	BeaconApiFlag = &cli.StringSliceFlag{
@@ -1497,7 +1521,7 @@ func setWS(ctx *cli.Context, cfg *node.Config) {
 // setIPC creates an IPC path configuration from the set command line flags,
 // returning an empty string if IPC was explicitly disabled, or the set path.
 func setIPC(ctx *cli.Context, cfg *node.Config) {
-	CheckExclusive(ctx, IPCDisabledFlag, IPCPathFlag)
+	flags.CheckExclusive(ctx, IPCDisabledFlag, IPCPathFlag)
 	switch {
 	case ctx.Bool(IPCDisabledFlag.Name):
 		cfg.IPCPath = ""
@@ -1660,8 +1684,8 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 		cfg.PeerFilterPatterns = ctx.StringSlice(PeerFilterPatternsFlag.Name)
 	}
 
-	CheckExclusive(ctx, DiscoveryV4Flag, NoDiscoverFlag)
-	CheckExclusive(ctx, DiscoveryV5Flag, NoDiscoverFlag)
+	flags.CheckExclusive(ctx, DiscoveryV4Flag, NoDiscoverFlag)
+	flags.CheckExclusive(ctx, DiscoveryV5Flag, NoDiscoverFlag)
 	cfg.DiscoveryV4 = ctx.Bool(DiscoveryV4Flag.Name)
 	cfg.DiscoveryV5 = ctx.Bool(DiscoveryV5Flag.Name)
 
@@ -1938,52 +1962,11 @@ func setRequiredBlocks(ctx *cli.Context, cfg *ethconfig.Config) {
 	}
 }
 
-// CheckExclusive verifies that only a single instance of the provided flags was
-// set by the user. Each flag might optionally be followed by a string type to
-// specialize it further.
-func CheckExclusive(ctx *cli.Context, args ...interface{}) {
-	set := make([]string, 0, 1)
-	for i := 0; i < len(args); i++ {
-		// Make sure the next argument is a flag and skip if not set
-		flag, ok := args[i].(cli.Flag)
-		if !ok {
-			panic(fmt.Sprintf("invalid argument, not cli.Flag type: %T", args[i]))
-		}
-		// Check if next arg extends current and expand its name if so
-		name := flag.Names()[0]
-
-		if i+1 < len(args) {
-			switch option := args[i+1].(type) {
-			case string:
-				// Extended flag check, make sure value set doesn't conflict with passed in option
-				if ctx.String(flag.Names()[0]) == option {
-					name += "=" + option
-					set = append(set, "--"+name)
-				}
-				// shift arguments and continue
-				i++
-				continue
-
-			case cli.Flag:
-			default:
-				panic(fmt.Sprintf("invalid argument, not cli.Flag or string extension: %T", args[i+1]))
-			}
-		}
-		// Mark the flag if it's set
-		if ctx.IsSet(flag.Names()[0]) {
-			set = append(set, "--"+name)
-		}
-	}
-	if len(set) > 1 {
-		Fatalf("Flags %v can't be used at the same time", strings.Join(set, ", "))
-	}
-}
-
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, BSCMainnetFlag, DeveloperFlag)
-	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
+	flags.CheckExclusive(ctx, BSCMainnetFlag, DeveloperFlag)
+	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
 	// Set configurations from CLI flags
 	setEtherbase(ctx, cfg)
@@ -2022,10 +2005,19 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(SyncTargetFlag.Name) {
 		cfg.SyncMode = ethconfig.FullSync // dev sync target forces full sync
 	} else if ctx.IsSet(SyncModeFlag.Name) {
-		if err = cfg.SyncMode.UnmarshalText([]byte(ctx.String(SyncModeFlag.Name))); err != nil {
-			Fatalf("invalid --syncmode flag: %v", err)
+		value := ctx.String(SyncModeFlag.Name)
+		if err = cfg.SyncMode.UnmarshalText([]byte(value)); err != nil {
+			Fatalf("--%v: %v", SyncModeFlag.Name, err)
 		}
 	}
+
+	if ctx.IsSet(ChainHistoryFlag.Name) {
+		value := ctx.String(ChainHistoryFlag.Name)
+		if err = cfg.HistoryMode.UnmarshalText([]byte(value)); err != nil {
+			Fatalf("--%s: %v", ChainHistoryFlag.Name, err)
+		}
+	}
+
 	if ctx.IsSet(NetworkIdFlag.Name) {
 		cfg.NetworkId = ctx.Uint64(NetworkIdFlag.Name)
 	}
@@ -2098,12 +2090,26 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.JournalFileEnabled = true
 	}
 
-	if ctx.String(GCModeFlag.Name) == "archive" && cfg.TransactionHistory != 0 {
-		cfg.TransactionHistory = 0
-		log.Warn("Disabled transaction unindexing for archive node")
+	if ctx.String(GCModeFlag.Name) == "archive" {
+		if cfg.TransactionHistory != 0 {
+			cfg.TransactionHistory = 0
+			log.Warn("Disabled transaction unindexing for archive node")
+		}
 
-		cfg.StateScheme = rawdb.HashScheme
-		log.Warn("Forcing hash state-scheme for archive mode")
+		// TODO(Nathan): remove
+		if cfg.StateScheme != rawdb.HashScheme {
+			cfg.StateScheme = rawdb.HashScheme
+			log.Warn("Forcing hash state-scheme for archive mode")
+		}
+	}
+	if ctx.IsSet(LogHistoryFlag.Name) {
+		cfg.LogHistory = ctx.Uint64(LogHistoryFlag.Name)
+	}
+	if ctx.IsSet(LogNoHistoryFlag.Name) {
+		cfg.LogNoHistory = true
+	}
+	if ctx.IsSet(LogExportCheckpointsFlag.Name) {
+		cfg.LogExportCheckpoints = ctx.String(LogExportCheckpointsFlag.Name)
 	}
 	if ctx.String(GCModeFlag.Name) == "archive" && cfg.BlockHistory != 0 {
 		cfg.BlockHistory = 0
@@ -2246,8 +2252,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		// the miner will fail to start.
 		cfg.Miner.Etherbase = developer.Address
 
-		if err := ks.Unlock(developer, passphrase); err != nil {
-			Fatalf("Failed to unlock developer account: %v", err)
+		// try to unlock the first keystore account
+		if len(ks.Accounts()) > 0 {
+			if err := ks.Unlock(developer, passphrase); err != nil {
+				Fatalf("Failed to unlock developer account: %v", err)
+			}
 		}
 		log.Info("Using developer account", "address", developer.Address)
 
@@ -2585,7 +2594,7 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly, disableFree
 		}
 		chainDb = remotedb.New(client)
 	default:
-		chainDb, err = stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.String(AncientFlag.Name), "", readonly, disableFreeze)
+		chainDb, err = stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.String(AncientFlag.Name), "eth/db/chaindata/", readonly, disableFreeze)
 		// set the separate state database
 		if stack.CheckIfMultiDataBase() && err == nil {
 			stateDiskDb := MakeStateDataBase(ctx, stack, readonly, false)

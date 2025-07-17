@@ -20,6 +20,7 @@ package legacypool
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"slices"
@@ -40,8 +41,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -624,11 +625,11 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 	return pending
 }
 
-// validateTxBasics checks whether a transaction is valid according to the consensus
+// ValidateTxBasics checks whether a transaction is valid according to the consensus
 // rules, but does not check state-dependent validation such as sufficient balance.
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
-func (pool *LegacyPool) validateTxBasics(tx *types.Transaction) error {
+func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 	sender, err := types.Sender(pool.signer, tx)
 	if err != nil {
 		return err
@@ -651,10 +652,7 @@ func (pool *LegacyPool) validateTxBasics(tx *types.Transaction) error {
 		MinTip:  pool.gasTip.Load().ToBig(),
 		MaxGas:  pool.GetMaxGas(),
 	}
-	if err := txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts); err != nil {
-		return err
-	}
-	return nil
+	return txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts)
 }
 
 // validateTx checks whether a transaction is valid according to the consensus
@@ -705,7 +703,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	from, _ := types.Sender(pool.signer, tx) // validated
 
 	// Short circuit if the sender has neither delegation nor pending delegation.
-	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && pool.all.delegationTxsCount(from) == 0 {
+	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && len(pool.all.auths[from]) == 0 {
 		return nil
 	}
 	pending := pool.pending[from]
@@ -1038,7 +1036,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 		// Exclude transactions with basic errors, e.g invalid signatures and
 		// insufficient intrinsic gas as soon as possible and cache senders
 		// in transactions before obtaining lock
-		if err := pool.validateTxBasics(tx); err != nil {
+		if err := pool.ValidateTxBasics(tx); err != nil {
 			errs[i] = err
 			log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", err)
 			invalidTxMeter.Mark(1)
@@ -1120,6 +1118,20 @@ func (pool *LegacyPool) Get(hash common.Hash) *types.Transaction {
 // get returns a transaction if it is contained in the pool and nil otherwise.
 func (pool *LegacyPool) get(hash common.Hash) *types.Transaction {
 	return pool.all.Get(hash)
+}
+
+// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
+func (pool *LegacyPool) GetRLP(hash common.Hash) []byte {
+	tx := pool.all.Get(hash)
+	if tx == nil {
+		return nil
+	}
+	encoded, err := rlp.EncodeToBytes(tx)
+	if err != nil {
+		log.Error("Failed to encoded transaction in legacy pool", "hash", hash, "err", err)
+		return nil
+	}
+	return encoded
 }
 
 // GetBlobs is not supported by the legacy transaction pool, it is just here to
@@ -1719,7 +1731,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			gapped := list.Cap(0)
 			for _, tx := range gapped {
 				hash := tx.Hash()
-				log.Error("Demoting invalidated transaction", "hash", hash)
+				log.Warn("Demoting invalidated transaction", "hash", hash)
 
 				// Internal shuffle shouldn't touch the lookup set.
 				pool.enqueueTx(hash, tx, false)
@@ -1794,7 +1806,7 @@ func (as *accountSet) addTx(tx *types.Transaction) {
 // reuse. The returned slice should not be changed!
 func (as *accountSet) flatten() []common.Address {
 	if as.cache == nil {
-		as.cache = maps.Keys(as.accounts)
+		as.cache = slices.Collect(maps.Keys(as.accounts))
 	}
 	return as.cache
 }
