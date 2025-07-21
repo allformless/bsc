@@ -7,6 +7,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
@@ -23,7 +24,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		DisablePeerTxBroadcast  bool
 		EVNNodeIDsToAdd         []enode.ID
 		EVNNodeIDsToRemove      []enode.ID
-		HistoryMode             HistoryMode
+		HistoryMode             history.HistoryMode
 		EthDiscoveryURLs        []string
 		SnapDiscoveryURLs       []string
 		BscDiscoveryURLs        []string
@@ -145,7 +146,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		DisablePeerTxBroadcast  *bool
 		EVNNodeIDsToAdd         []enode.ID
 		EVNNodeIDsToRemove      []enode.ID
-		HistoryMode             *HistoryMode
+		HistoryMode             *history.HistoryMode
 		EthDiscoveryURLs        []string
 		SnapDiscoveryURLs       []string
 		BscDiscoveryURLs        []string

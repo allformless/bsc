@@ -82,6 +82,13 @@ func (b *testBackend) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	return r
 }
 
+func (b *testBackend) GetRawReceiptsByHash(hash common.Hash) types.Receipts {
+	if number := rawdb.ReadHeaderNumber(b.db, hash); number != nil {
+		return rawdb.ReadRawReceipts(b.db, hash, *number)
+	}
+	return nil
+}
+
 func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
 	var (
 		hash common.Hash
@@ -159,6 +166,11 @@ func (b *testBackend) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.S
 	return b.voteFeed.Subscribe(ch)
 }
 
+func (b *testBackend) CurrentView() *filtermaps.ChainView {
+	head := b.CurrentBlock()
+	return filtermaps.NewChainView(b, head.Number.Uint64(), head.Hash())
+}
+
 func (b *testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
 	return b.fm.NewMatcherBackend()
 }
@@ -179,6 +191,10 @@ func (b *testBackend) startFilterMaps(history uint64, disabled bool, params filt
 func (b *testBackend) stopFilterMaps() {
 	b.fm.Stop()
 	b.fm = nil
+}
+
+func (b *testBackend) HistoryPruningCutoff() uint64 {
+	return 0
 }
 
 func newTestFilterSystem(db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
