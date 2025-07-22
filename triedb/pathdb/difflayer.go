@@ -96,7 +96,10 @@ func (h *HashNodeCache) Add(ly layer) {
 		return
 	}
 	beforeAdd := h.length()
-	for _, subset := range dl.nodes.nodes {
+	for _, node := range dl.nodes.accountNodes {
+		h.set(node.Hash, node)
+	}
+	for _, subset := range dl.nodes.storageNodes {
 		for _, node := range subset {
 			h.set(node.Hash, node)
 		}
@@ -115,7 +118,10 @@ func (h *HashNodeCache) Remove(ly layer) {
 	}
 	go func() {
 		beforeDel := h.length()
-		for _, subset := range dl.nodes.nodes {
+		for _, node := range dl.nodes.accountNodes {
+			h.del(node.Hash)
+		}
+		for _, subset := range dl.nodes.storageNodes {
 			for _, node := range subset {
 				h.del(node.Hash)
 			}
