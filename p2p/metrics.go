@@ -133,8 +133,8 @@ func markServeError(err error) {
 		serveUnexpectedIdentity.Mark(1)
 	case errEncHandshakeError:
 		serveEncHandshakeError.Mark(1)
-	case errProtoHandshakeError:
-		serveProtoHandshakeError.Mark(1)
+	default:
+		dialOtherError.Mark(1)
 	}
 }
 

@@ -200,7 +200,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	// Here we determine genesis hash and active ChainConfig.
 	// We need these to figure out the consensus parameters and to set up history pruning.
-	chainConfig, _, err := core.LoadChainConfig(chainDb, config.Genesis)
+	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +363,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		History:        config.LogHistory,
 		Disabled:       config.LogNoHistory,
 		ExportFileName: config.LogExportCheckpoints,
-		HashScheme:     scheme == rawdb.HashScheme,
+		HashScheme:     config.StateScheme == rawdb.HashScheme,
 	}
 	chainView := eth.newChainView(eth.blockchain.CurrentBlock())
 	historyCutoff, _ := eth.blockchain.HistoryPruningCutoff()

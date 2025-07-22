@@ -266,7 +266,6 @@ func ImportHistory(chain *core.BlockChain, dir string, network string) error {
 		start    = time.Now()
 		reported = time.Now()
 		imported = 0
-		forker   = core.NewForkChoice(chain, nil)
 		h        = sha256.New()
 		buf      = bytes.NewBuffer(nil)
 	)

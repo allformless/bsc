@@ -279,8 +279,9 @@ func copyNodeCache(n *nodecache) *nodecache {
 	nc := newNodeCache(int(n.limit), nil, nil, n.layers)
 	nc.immutable = atomic.LoadUint64(&n.immutable)
 
-	for acc, subTree := range n.nodes.nodes {
-		nc.nodes.nodes[acc] = maps.Clone(subTree)
+	nc.nodes.accountNodes = maps.Clone(n.nodes.accountNodes)
+	for acc, subTree := range n.nodes.storageNodes {
+		nc.nodes.storageNodes[acc] = maps.Clone(subTree)
 	}
 	nc.nodes.size = n.nodes.size
 

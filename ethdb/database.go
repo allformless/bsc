@@ -18,11 +18,10 @@
 package ethdb
 
 import (
+	"errors"
 	"io"
 
 	"github.com/ethereum/go-ethereum/params"
-	"errors"
-	"io"
 )
 
 // KeyValueReader wraps the Has and Get method of a backing data store.

@@ -26,7 +26,6 @@ import (
 	"runtime"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1594,6 +1593,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 		}
 		// Write all chain data to ancients.
+		first := blockChain[0]
 		td := bc.GetTd(first.Hash(), first.NumberU64())
 		writeSize, err := rawdb.WriteAncientBlocksWithBlobs(bc.db, blockChain, receiptChain, td)
 		if err != nil {
@@ -1611,7 +1611,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		for _, block := range blockChain {
 			rawdb.WriteHeaderNumber(batch, block.Hash(), block.NumberU64())
 		}
-		if err := blockBatch.Write(); err != nil {
+		if err := batch.Write(); err != nil {
 			return 0, err
 		}
 		// Update the current snap block because all block data is now present in DB.
@@ -3131,6 +3131,76 @@ func (bc *BlockChain) TriesInMemory() uint64 { return bc.triesInMemory }
 func EnableDoubleSignChecker(bc *BlockChain) (*BlockChain, error) {
 	bc.doubleSignMonitor = monitor.NewDoubleSignMonitor()
 	return bc, nil
+}
+
+// InsertHeadersBeforeCutoff inserts the given headers into the ancient store
+// as they are claimed older than the configured chain cutoff point. All the
+// inserted headers are regarded as canonical and chain reorg is not supported.
+func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, error) {
+	if len(headers) == 0 {
+		return 0, nil
+	}
+	// TODO(rjl493456442): Headers before the configured cutoff have already
+	// been verified by the hash of cutoff header. Theoretically, header validation
+	// could be skipped here.
+	if n, err := bc.hc.ValidateHeaderChain(headers); err != nil {
+		return n, err
+	}
+	if !bc.chainmu.TryLock() {
+		return 0, errChainStopped
+	}
+	defer bc.chainmu.Unlock()
+
+	// Initialize the ancient store with genesis block if it's empty.
+	var (
+		frozen, _ = bc.db.Ancients()
+		first     = headers[0].Number.Uint64()
+	)
+	if first == 1 && frozen == 0 {
+		td := bc.genesisBlock.Difficulty()
+		_, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []types.Receipts{nil}, td)
+		if err != nil {
+			log.Error("Error writing genesis to ancients", "err", err)
+			return 0, err
+		}
+		log.Info("Wrote genesis to ancient store")
+	} else if frozen != first {
+		return 0, fmt.Errorf("headers are gapped with the ancient store, first: %d, ancient: %d", first, frozen)
+	}
+
+	// Write headers to the ancient store, with block bodies and receipts set to nil
+	// to ensure consistency across tables in the freezer.
+	_, err := rawdb.WriteAncientHeaderChain(bc.db, headers)
+	if err != nil {
+		return 0, err
+	}
+	// Sync the ancient store explicitly to ensure all data has been flushed to disk.
+	if err := bc.db.SyncAncient(); err != nil {
+		return 0, err
+	}
+	// Write hash to number mappings
+	batch := bc.db.NewBatch()
+	for _, header := range headers {
+		rawdb.WriteHeaderNumber(batch, header.Hash(), header.Number.Uint64())
+	}
+	// Write head header and head snap block flags
+	last := headers[len(headers)-1]
+	rawdb.WriteHeadHeaderHash(batch, last.Hash())
+	rawdb.WriteHeadFastBlockHash(batch, last.Hash())
+	if err := batch.Write(); err != nil {
+		return 0, err
+	}
+	// Truncate the useless chain segment (zero bodies and receipts) in the
+	// ancient store.
+	if _, err := bc.db.TruncateTail(last.Number.Uint64() + 1); err != nil {
+		return 0, err
+	}
+	// Last step update all in-memory markers
+	bc.hc.currentHeader.Store(last)
+	bc.currentSnapBlock.Store(last)
+	headHeaderGauge.Update(last.Number.Int64())
+	headFastBlockGauge.Update(last.Number.Int64())
+	return 0, nil
 }
 
 // SetBlockValidatorAndProcessorForTesting sets the current validator and processor.

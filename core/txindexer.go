@@ -261,7 +261,7 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 	defer sub.Unsubscribe()
 
 	// Validate the transaction indexes and repair if necessary
-	// head := indexer.head.Load()
+	head := indexer.head.Load()
 	// indexer.repair(head)
 
 	// Launch the initial processing if chain is not empty (head != genesis).

@@ -227,7 +227,7 @@ type BlockChain interface {
 
 	// AncientTail retrieves the tail the ancients blocks
 	AncientTail() (uint64, error)
-	
+
 	// HistoryPruningCutoff returns the configured history pruning point.
 	// Block bodies along with the receipts will be skipped for synchronization.
 	HistoryPruningCutoff() (uint64, common.Hash)
@@ -616,8 +616,8 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 
 	fetchers := []func() error{
 		func() error { return d.fetchHeaders(p, origin+1, remoteHeader.Number.Uint64()) }, // Headers are always retrieved
-		func() error { return d.fetchBodies(chainOffset, beaconMode) },                       // Bodies are retrieved during normal and snap sync
-		func() error { return d.fetchReceipts(chainOffset, beaconMode) },                     // Receipts are retrieved during snap sync
+		func() error { return d.fetchBodies(chainOffset, beaconMode) },                    // Bodies are retrieved during normal and snap sync
+		func() error { return d.fetchReceipts(chainOffset, beaconMode) },                  // Receipts are retrieved during snap sync
 		func() error { return d.processHeaders(origin+1, td, ttd, beaconMode) },
 	}
 	if mode == ethconfig.SnapSync {
@@ -1114,16 +1114,6 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, head uint64) e
 		// If we received a skeleton batch, resolve internals concurrently
 		var progressed bool
 		if skeleton {
-			filled, hashset, proced, err := d.fillHeaderSkeleton(from, headers)
-			if err != nil {
-				p.log.Debug("Skeleton chain invalid", "err", err)
-				return fmt.Errorf("%w: %v", errInvalidChain, err)
-			}
-			headers = filled[proced:]
-			hashes = hashset[proced:]
-
-			progressed = proced > 0
-			from += uint64(proced)
 		} else {
 			// A malicious node might withhold advertised headers indefinitely
 			if n := len(headers); n < MaxHeaderFetch && headers[n-1].Number.Uint64() < head {
@@ -1188,30 +1178,6 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, head uint64) e
 			pivoting = true
 		}
 	}
-}
-
-// fillHeaderSkeleton concurrently retrieves headers from all our available peers
-// and maps them to the provided skeleton header chain.
-//
-// Any partial results from the beginning of the skeleton is (if possible) forwarded
-// immediately to the header processor to keep the rest of the pipeline full even
-// in the case of header stalls.
-//
-// The method returns the entire filled skeleton and also the number of headers
-// already forwarded for processing.
-func (d *Downloader) fillHeaderSkeleton(from uint64, skeleton []*types.Header) ([]*types.Header, []common.Hash, int, error) {
-	log.Debug("Filling up skeleton", "from", from)
-	d.queue.ScheduleSkeleton(from, skeleton)
-
-	err := d.concurrentFetch((*headerQueue)(d), false)
-	if err != nil {
-		log.Debug("Skeleton fill failed", "err", err)
-	}
-	filled, hashes, proced := d.queue.RetrieveHeaders()
-	if err == nil {
-		log.Debug("Skeleton fill succeeded", "filled", len(filled), "processed", proced)
-	}
-	return filled, hashes, proced, err
 }
 
 // fetchBodies iteratively downloads the scheduled block bodies, taking any
