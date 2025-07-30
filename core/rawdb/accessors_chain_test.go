@@ -556,7 +556,7 @@ func TestAncientStorage(t *testing.T) {
 	}
 
 	// Write and verify the header in the database
-	_, err = WriteAncientBlocks(db, []*types.Block{block}, types.EncodeBlockReceiptLists([]types.Receipts{nil}, big.NewInt(100))
+	_, err = WriteAncientBlocks(db, []*types.Block{block}, types.EncodeBlockReceiptLists([]types.Receipts{nil}), big.NewInt(100))
 	require.NoError(t, err)
 
 	if blob := ReadHeaderRLP(db, hash, number); len(blob) == 0 {
@@ -1084,7 +1084,7 @@ func TestHeadersRLPStorage(t *testing.T) {
 	}
 	receipts := make([]types.Receipts, 100)
 	// Write first half to ancients
-	WriteAncientBlocks(db, chain[:50], types.EncodeBlockReceiptLists(receipts[:50], big.NewInt(100))
+	WriteAncientBlocks(db, chain[:50], types.EncodeBlockReceiptLists(receipts[:50]), big.NewInt(100))
 	// Write second half to db
 	for i := 50; i < 100; i++ {
 		WriteCanonicalHash(db, chain[i].Hash(), chain[i].NumberU64())
