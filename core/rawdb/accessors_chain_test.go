@@ -602,6 +602,7 @@ func TestWriteAncientHeaderChain(t *testing.T) {
 	var headers []*types.Header
 	headers = append(headers, &types.Header{
 		Number:      big.NewInt(0),
+		Difficulty:  big.NewInt(2),
 		Extra:       []byte("test block"),
 		UncleHash:   types.EmptyUncleHash,
 		TxHash:      types.EmptyTxsHash,
@@ -609,13 +610,15 @@ func TestWriteAncientHeaderChain(t *testing.T) {
 	})
 	headers = append(headers, &types.Header{
 		Number:      big.NewInt(1),
+		Difficulty:  big.NewInt(2),
 		Extra:       []byte("test block"),
 		UncleHash:   types.EmptyUncleHash,
 		TxHash:      types.EmptyTxsHash,
 		ReceiptHash: types.EmptyReceiptsHash,
 	})
 	// Write and verify the header in the database
-	WriteAncientHeaderChain(db, headers)
+	ptd := new(big.Int)
+	WriteAncientHeaderChain(db, headers, ptd)
 
 	for _, header := range headers {
 		if blob := ReadHeaderRLP(db, header.Hash(), header.Number.Uint64()); len(blob) == 0 {
@@ -629,6 +632,9 @@ func TestWriteAncientHeaderChain(t *testing.T) {
 		}
 		if blob := ReadReceiptsRLP(db, header.Hash(), header.Number.Uint64()); len(blob) != 0 {
 			t.Fatalf("unexpected body returned")
+		}
+		if blob := ReadTdRLP(db, header.Hash(), header.Number.Uint64()); len(blob) == 0 {
+			t.Fatalf("unexpected td returned")
 		}
 	}
 }

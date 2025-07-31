@@ -652,7 +652,7 @@ func ResetEmptyBlobAncientTable(db ethdb.AncientWriter, next uint64) error {
 func (f *chainFreezer) Ancient(kind string, number uint64) ([]byte, error) {
 	// Lookup the entry in the underlying ancient store, assuming that
 	// headers and hashes are always available.
-	if kind == ChainFreezerHeaderTable || kind == ChainFreezerHashTable {
+	if chainFreezerTableConfigs[kind].prunable == false {
 		return f.ancients.Ancient(kind, number)
 	}
 	tail, err := f.ancients.Tail()
