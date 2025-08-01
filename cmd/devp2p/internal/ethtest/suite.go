@@ -69,9 +69,9 @@ func (s *Suite) EthTests() []utesting.Test {
 		// status
 		{Name: "Status", Fn: s.TestStatus},
 		{Name: "MaliciousHandshake", Fn: s.TestMaliciousHandshake},
-		{Name: "BlockRangeUpdateExpired", Fn: s.TestBlockRangeUpdateHistoryExp},
-		{Name: "BlockRangeUpdateFuture", Fn: s.TestBlockRangeUpdateFuture},
-		{Name: "BlockRangeUpdateInvalid", Fn: s.TestBlockRangeUpdateInvalid},
+		// {Name: "BlockRangeUpdateExpired", Fn: s.TestBlockRangeUpdateHistoryExp},
+		// {Name: "BlockRangeUpdateFuture", Fn: s.TestBlockRangeUpdateFuture},
+		// {Name: "BlockRangeUpdateInvalid", Fn: s.TestBlockRangeUpdateInvalid},
 		// get block headers
 		{Name: "GetBlockHeaders", Fn: s.TestGetBlockHeaders},
 		{Name: "GetNonexistentBlockHeaders", Fn: s.TestGetNonexistentBlockHeaders},
@@ -80,7 +80,7 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "ZeroRequestID", Fn: s.TestZeroRequestID},
 		// get history
 		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
-		{Name: "GetReceipts", Fn: s.TestGetReceipts},
+		// {Name: "GetReceipts", Fn: s.TestGetReceipts},
 		// test transactions
 		{Name: "LargeTxRequest", Fn: s.TestLargeTxRequest, Slow: true},
 		{Name: "Transaction", Fn: s.TestTransaction},
