@@ -79,14 +79,15 @@ type chainFreezer struct {
 //   - if non-empty directory is given, initializes the regular file-based
 //     state freezer.
 func newChainFreezer(datadir string, eraDir string, namespace string, readonly bool, multiDatabase bool) (*chainFreezer, error) {
+	var (
+		err     error
+		freezer ethdb.AncientStore
+	)
 	if datadir == "" {
-		return &chainFreezer{
-			ancients: NewMemoryFreezer(readonly, chainFreezerTableConfigs),
-			quit:     make(chan struct{}),
-			trigger:  make(chan chan struct{}),
-		}, nil
+		freezer = NewMemoryFreezer(readonly, chainFreezerTableConfigs)
+	} else {
+		freezer, err = NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerTableConfigs)
 	}
-	freezer, err := NewFreezer(datadir, namespace, readonly, freezerTableSize, chainFreezerTableConfigs)
 	if err != nil {
 		return nil, err
 	}
@@ -95,14 +96,14 @@ func newChainFreezer(datadir string, eraDir string, namespace string, readonly b
 		return nil, err
 	}
 	cf := chainFreezer{
-		ancients: freezer,
-		eradb:    edb,
-		quit:     make(chan struct{}),
-		trigger:  make(chan chan struct{}),
-		// After enabling pruneAncient, the ancient data is not retained. In some specific scenarios where it is
-		// necessary to roll back to blocks prior to the finalized block, it is mandatory to keep the most recent 90,000 blocks in the database to ensure proper functionality and rollback capability.
-		multiDatabase: false,
+		ancients:      freezer,
+		eradb:         edb,
+		quit:          make(chan struct{}),
+		trigger:       make(chan chan struct{}),
+		multiDatabase: multiDatabase,
 	}
+	// After enabling pruneAncient, the ancient data is not retained. In some specific scenarios where it is
+	// necessary to roll back to blocks prior to the finalized block, it is mandatory to keep the most recent 90,000 blocks in the database to ensure proper functionality and rollback capability.
 	cf.threshold.Store(params.FullImmutabilityThreshold)
 	return &cf, nil
 }
