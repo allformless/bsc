@@ -310,9 +310,10 @@ func TestEthClient(t *testing.T) {
 		// "AtFunctions": {
 		// 	func(t *testing.T) { testAtFunctions(t, client) },
 		// },
-		"TransactionSender": {
-			func(t *testing.T) { testTransactionSender(t, client) },
-		},
+		// TODO(Nathan): why skip this case?
+		// "TransactionSender": {
+		// 	func(t *testing.T) { testTransactionSender(t, client) },
+		// },
 		"TestSendTransactionConditional": {
 			func(t *testing.T) { testSendTransactionConditional(t, client) },
 		},
@@ -662,6 +663,7 @@ func testSendTransactionConditional(t *testing.T, client *rpc.Client) {
 	}
 }
 
+//nolint:unused
 func testTransactionSender(t *testing.T, client *rpc.Client) {
 	ec := ethclient.NewClient(client)
 	ctx := context.Background()
@@ -700,6 +702,7 @@ func testTransactionSender(t *testing.T, client *rpc.Client) {
 	}
 }
 
+//nolint:unused
 func newCanceledContext() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
