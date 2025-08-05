@@ -80,7 +80,7 @@ func (s *Suite) EthTests() []utesting.Test {
 		{Name: "ZeroRequestID", Fn: s.TestZeroRequestID},
 		// get history
 		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
-		// {Name: "GetReceipts", Fn: s.TestGetReceipts},
+		{Name: "GetReceipts", Fn: s.TestGetReceipts},
 		// test transactions
 		{Name: "LargeTxRequest", Fn: s.TestLargeTxRequest, Slow: true},
 		{Name: "Transaction", Fn: s.TestTransaction},
@@ -424,7 +424,7 @@ func (s *Suite) TestGetReceipts(t *utesting.T) {
 		t.Fatalf("could not write to connection: %v", err)
 	}
 	// Wait for response.
-	resp := new(eth.ReceiptsPacket[*eth.ReceiptList69])
+	resp := new(eth.ReceiptsPacket[*eth.ReceiptList68])
 	if err := conn.ReadMsg(ethProto, eth.ReceiptsMsg, &resp); err != nil {
 		t.Fatalf("error reading block bodies msg: %v", err)
 	}
