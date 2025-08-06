@@ -1749,24 +1749,11 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				size += int64(batch.ValueSize())
 				batch.Reset()
 			}
-			if batch.ValueSize() >= ethdb.IdealBatchSize {
-				if err := batch.Write(); err != nil {
-					return 0, err
-				}
-				size += int64(batch.ValueSize())
-				batch.Reset()
-			}
 			stats.processed++
 		}
 		// Write everything belongs to the blocks into the database. So that
 		// we can ensure all components of body is completed(body, receipts,
 		// tx indexes)
-		if batch.ValueSize() > 0 {
-			size += int64(batch.ValueSize())
-			if err := batch.Write(); err != nil {
-				return 0, err
-			}
-		}
 		if batch.ValueSize() > 0 {
 			size += int64(batch.ValueSize())
 			if err := batch.Write(); err != nil {

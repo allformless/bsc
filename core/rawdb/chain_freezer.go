@@ -648,7 +648,6 @@ func ResetEmptyBlobAncientTable(db ethdb.AncientWriter, next uint64) error {
 	return db.ResetTable(ChainFreezerBlobSidecarTable, next, true)
 }
 
-// TODO(Nathan): prunable is different from geth
 // Ancient retrieves an ancient binary blob from the append-only immutable files.
 func (f *chainFreezer) Ancient(kind string, number uint64) ([]byte, error) {
 	// Lookup the entry in the underlying ancient store, assuming that
