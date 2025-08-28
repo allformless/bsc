@@ -406,26 +406,23 @@ func lookupDistances(target, dest enode.ID) (dists []uint) {
 
 // ping calls PING on a node and waits for a PONG response.
 func (t *UDPv5) ping(n *enode.Node) (uint64, error) {
-	pong, err := t.Ping(n)
-	if err != nil {
-		return 0, err
-	}
-
-	return pong.ENRSeq, nil
-}
-
-// Ping calls PING on a node and waits for a PONG response.
-func (t *UDPv5) Ping(n *enode.Node) (*v5wire.Pong, error) {
 	req := &v5wire.Ping{ENRSeq: t.localNode.Node().Seq()}
 	resp := t.callToNode(n, v5wire.PongMsg, req)
 	defer t.callDone(resp)
 
 	select {
 	case pong := <-resp.ch:
-		return pong.(*v5wire.Pong), nil
+		return pong.(*v5wire.Pong).ENRSeq, nil
 	case err := <-resp.err:
-		return nil, err
+		return 0, err
 	}
+}
+
+// TODO(Nathan): different from geth, to work with prysm
+// Ping sends a ping message to the given node.
+func (t *UDPv5) Ping(n *enode.Node) error {
+	_, err := t.ping(n)
+	return err
 }
 
 // RequestENR requests n's record.
@@ -493,6 +490,9 @@ func (t *UDPv5) verifyResponseNode(c *callV5, r *enr.Record, distances []uint, s
 	}
 	if node.UDP() <= 1024 {
 		return nil, errLowPort
+	}
+	if t.tab.enrFilter != nil && !t.tab.enrFilter(r) {
+		return nil, errors.New("filtered by ENR filter")
 	}
 	if distances != nil {
 		nd := enode.LogDist(c.id, node.ID())

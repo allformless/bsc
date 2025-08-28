@@ -55,7 +55,7 @@ var (
 	serve1MinSuccessMeter = metrics.NewRegisteredMeter("p2p/serves/success/1min", nil)
 	dial1MinSuccessMeter  = metrics.NewRegisteredMeter("p2p/dials/success/1min", nil)
 
-	// handshake error meters
+	// dial error meters
 	dialTooManyPeers        = metrics.NewRegisteredMeter("p2p/dials/error/saturated", nil)
 	dialAlreadyConnected    = metrics.NewRegisteredMeter("p2p/dials/error/known", nil)
 	dialSelf                = metrics.NewRegisteredMeter("p2p/dials/error/self", nil)
@@ -78,6 +78,9 @@ var (
 
 	// capture the rest of errors that are not handled by the above meters
 	serveOtherError = metrics.NewRegisteredMeter("p2p/serves/error/other", nil)
+
+	normalPeerLatencyStat = metrics.NewRegisteredTimer("p2p/peers/normal/latency", nil)
+	evnPeerLatencyStat    = metrics.NewRegisteredTimer("p2p/peers/evn/latency", nil)
 )
 
 // markDialError matches errors that occur while setting up a dial connection to the

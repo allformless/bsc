@@ -23,6 +23,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/mclock"
@@ -46,6 +47,8 @@ const (
 	snappyProtocolVersion = 5
 
 	pingInterval = 15 * time.Second
+
+	slowPeerLatencyThreshold = 500
 )
 
 const (
@@ -113,11 +116,19 @@ type Peer struct {
 	protoErr chan error
 	closed   chan struct{}
 	pingRecv chan struct{}
+	pongRecv chan struct{}
 	disc     chan DiscReason
 
 	// events receives message send / receive events if set
-	events   *event.Feed
-	testPipe *MsgPipeRW // for testing
+	events         *event.Feed
+	testPipe       *MsgPipeRW // for testing
+	testRemoteAddr string     // for testing
+
+	latency atomic.Int64 // mill second latency, estimated by ping msg
+
+	// it indicates the peer is in the validator network, it will directly broadcast when miner/sentry broadcast mined block,
+	// and won't broadcast any txs between EVN peers.
+	EVNPeerFlag atomic.Bool
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -145,6 +156,16 @@ func NewPeerPipe(id enode.ID, name string, caps []Cap, pipe *MsgPipeRW) *Peer {
 	p := NewPeer(id, name, caps)
 	p.testPipe = pipe
 	return p
+}
+
+// NewPeerWithProtocols returns a peer for testing purposes.
+func NewPeerWithProtocols(id enode.ID, protocols []Protocol, name string, caps []Cap) *Peer {
+	pipe, _ := net.Pipe()
+	node := enode.SignNull(new(enr.Record), id)
+	conn := &conn{fd: pipe, transport: nil, node: node, caps: caps, name: name}
+	peer := newPeer(log.Root(), conn, protocols)
+	close(peer.closed) // ensures Disconnect doesn't block
+	return peer
 }
 
 // ID returns the node's public key.
@@ -193,7 +214,24 @@ func (p *Peer) RunningCap(protocol string, versions []uint) bool {
 
 // RemoteAddr returns the remote address of the network connection.
 func (p *Peer) RemoteAddr() net.Addr {
+	if len(p.testRemoteAddr) > 0 {
+		if addr, err := net.ResolveTCPAddr("tcp", p.testRemoteAddr); err == nil {
+			return addr
+		}
+		log.Warn("RemoteAddr", "invalid testRemoteAddr", p.testRemoteAddr)
+	}
+	if p.rw == nil {
+		return nil
+	}
 	return p.rw.fd.RemoteAddr()
+}
+
+func (p *Peer) UpdateTestRemoteAddr(addr string) { // test purpose only
+	p.testRemoteAddr = addr
+}
+
+func (p *Peer) UpdateTrustFlagTest() { // test purpose only
+	p.rw.set(trustedConn, true)
 }
 
 // LocalAddr returns the local address of the network connection.
@@ -259,6 +297,7 @@ func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
 		protoErr: make(chan error, len(protomap)+1), // protocols + pingLoop
 		closed:   make(chan struct{}),
 		pingRecv: make(chan struct{}, 16),
+		pongRecv: make(chan struct{}, 16),
 		log:      log.New("id", conn.node.ID(), "conn", conn.flags),
 	}
 	return p
@@ -332,9 +371,11 @@ func (p *Peer) pingLoop() {
 	ping := time.NewTimer(pingInterval)
 	defer ping.Stop()
 
+	var startPing atomic.Int64
 	for {
 		select {
 		case <-ping.C:
+			startPing.Store(time.Now().UnixMilli())
 			if err := SendItems(p.rw, pingMsg); err != nil {
 				p.protoErr <- err
 				return
@@ -344,6 +385,20 @@ func (p *Peer) pingLoop() {
 		case <-p.pingRecv:
 			SendItems(p.rw, pongMsg)
 
+		case <-p.pongRecv:
+			// estimate latency here, it also includes tiny msg encode/decode, io wait time
+			latency := (time.Now().UnixMilli() - startPing.Load()) / 2
+			if latency > 0 {
+				p.latency.Store(latency)
+				if p.EVNPeerFlag.Load() {
+					evnPeerLatencyStat.Update(time.Duration(latency))
+				} else {
+					normalPeerLatencyStat.Update(time.Duration(latency))
+				}
+				if latency > slowPeerLatencyThreshold {
+					log.Debug("find a too slow peer", "id", p.ID(), "peer", p.RemoteAddr(), "latency", latency)
+				}
+			}
 		case <-p.closed:
 			return
 		}
@@ -372,6 +427,12 @@ func (p *Peer) handle(msg Msg) error {
 		msg.Discard()
 		select {
 		case p.pingRecv <- struct{}{}:
+		case <-p.closed:
+		}
+	case msg.Code == pongMsg:
+		msg.Discard()
+		select {
+		case p.pongRecv <- struct{}{}:
 		case <-p.closed:
 		}
 	case msg.Code == discMsg:
@@ -555,7 +616,9 @@ type PeerInfo struct {
 		Trusted       bool   `json:"trusted"`
 		Static        bool   `json:"static"`
 	} `json:"network"`
-	Protocols map[string]interface{} `json:"protocols"` // Sub-protocol specific metadata fields
+	Protocols   map[string]interface{} `json:"protocols"` // Sub-protocol specific metadata fields
+	Latency     int64                  `json:"latency"`   // the estimate latency from ping msg
+	EVNPeerFlag bool                   `json:"evnPeerFlag"`
 }
 
 // Info gathers and returns a collection of metadata known about a peer.
@@ -567,11 +630,13 @@ func (p *Peer) Info() *PeerInfo {
 	}
 	// Assemble the generic peer metadata
 	info := &PeerInfo{
-		Enode:     p.Node().URLv4(),
-		ID:        p.ID().String(),
-		Name:      p.Fullname(),
-		Caps:      caps,
-		Protocols: make(map[string]interface{}, len(p.running)),
+		Enode:       p.Node().URLv4(),
+		ID:          p.ID().String(),
+		Name:        p.Fullname(),
+		Caps:        caps,
+		Protocols:   make(map[string]interface{}, len(p.running)),
+		Latency:     p.latency.Load(),
+		EVNPeerFlag: p.EVNPeerFlag.Load(),
 	}
 	if p.Node().Seq() > 0 {
 		info.ENR = p.Node().String()
@@ -579,7 +644,8 @@ func (p *Peer) Info() *PeerInfo {
 	info.Network.LocalAddress = p.LocalAddr().String()
 	info.Network.RemoteAddress = p.RemoteAddr().String()
 	info.Network.Inbound = p.rw.is(inboundConn)
-	info.Network.Trusted = p.rw.is(trustedConn)
+	// After Maxwell, we treat all EVN peers as trusted
+	info.Network.Trusted = p.rw.is(trustedConn) || p.EVNPeerFlag.Load()
 	info.Network.Static = p.rw.is(staticDialedConn)
 
 	// Gather all the running protocol infos
