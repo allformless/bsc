@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -40,10 +39,9 @@ import (
 )
 
 const (
-	alpha              = 3   // Kademlia concurrency factor
-	bucketSize         = 16  // Kademlia bucket size
-	bootNodeBucketSize = 256 // Bigger bucket size for boot nodes
-	maxReplacements    = 10  // Size of per-bucket replacement list
+	alpha           = 3  // Kademlia concurrency factor
+	bucketSize      = 16 // Kademlia bucket size
+	maxReplacements = 10 // Size of per-bucket replacement list
 
 	// We keep buckets for the upper 1/15 of distances because
 	// it's very unlikely we'll ever encounter a node that's closer.
@@ -66,7 +64,6 @@ const (
 type Table struct {
 	mutex        sync.Mutex        // protects buckets, bucket content, nursery, rand
 	buckets      [nBuckets]*bucket // index of known nodes by distance
-	bucketSize   int               // size of bucket
 	nursery      []*enode.Node     // bootstrap nodes
 	rand         reseedingRandom   // source of randomness, periodically reseeded
 	ips          netutil.DistinctNetSet
@@ -86,8 +83,6 @@ type Table struct {
 	initDone        chan struct{}
 	closeReq        chan struct{}
 	closed          chan struct{}
-
-	enrFilter NodeFilterFunc
 
 	nodeAddedHook   func(*bucket, *tableNode)
 	nodeRemovedHook func(*bucket, *tableNode)
@@ -112,10 +107,9 @@ type bucket struct {
 }
 
 type addNodeOp struct {
-	node          *enode.Node
-	isInbound     bool
-	forceSetLive  bool // for tests
-	syncExecution bool // for tests
+	node         *enode.Node
+	isInbound    bool
+	forceSetLive bool // for tests
 }
 
 type trackRequestOp struct {
@@ -140,11 +134,6 @@ func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
 		closeReq:        make(chan struct{}),
 		closed:          make(chan struct{}),
 		ips:             netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
-		enrFilter:       cfg.FilterFunction,
-		bucketSize:      bucketSize,
-	}
-	if cfg.IsBootnode {
-		tab.bucketSize = bootNodeBucketSize
 	}
 	for i := range tab.buckets {
 		tab.buckets[i] = &bucket{
@@ -321,7 +310,7 @@ func (tab *Table) len() (n int) {
 //
 // The caller must not hold tab.mutex.
 func (tab *Table) addFoundNode(n *enode.Node, forceSetLive bool) bool {
-	op := addNodeOp{node: n, isInbound: false, forceSetLive: forceSetLive, syncExecution: true}
+	op := addNodeOp{node: n, isInbound: false, forceSetLive: forceSetLive}
 	select {
 	case tab.addNodeCh <- op:
 		return <-tab.addNodeHandled
@@ -338,19 +327,8 @@ func (tab *Table) addFoundNode(n *enode.Node, forceSetLive bool) bool {
 // repeatedly.
 //
 // The caller must not hold tab.mutex.
-func (tab *Table) addInboundNode(n *enode.Node) {
+func (tab *Table) addInboundNode(n *enode.Node) bool {
 	op := addNodeOp{node: n, isInbound: true}
-	select {
-	case tab.addNodeCh <- op:
-		return
-	case <-tab.closeReq:
-		return
-	}
-}
-
-// Only for testing purposes
-func (tab *Table) addInboundNodeSync(n *enode.Node) bool {
-	op := addNodeOp{node: n, isInbound: true, syncExecution: true}
 	select {
 	case tab.addNodeCh <- op:
 		return <-tab.addNodeHandled
@@ -381,9 +359,8 @@ func (tab *Table) loop() {
 	defer reseedRandTimer.Stop()
 
 	// Start initial refresh.
-	gopool.Submit(func() {
-		tab.doRefresh(refreshDone)
-	})
+	go tab.doRefresh(refreshDone)
+
 loop:
 	for {
 		nextTime := tab.revalidation.run(tab, tab.cfg.Clock.Now())
@@ -399,16 +376,10 @@ loop:
 			tab.revalidation.handleResponse(tab, r)
 
 		case op := <-tab.addNodeCh:
-			// only happens in tests
-			if op.syncExecution {
-				ok := tab.handleAddNode(op)
-				tab.addNodeHandled <- ok
-			} else {
-				// async execution as handleAddNode is blocking
-				go func() {
-					tab.handleAddNode(op)
-				}()
-			}
+			tab.mutex.Lock()
+			ok := tab.handleAddNode(op)
+			tab.mutex.Unlock()
+			tab.addNodeHandled <- ok
 
 		case op := <-tab.trackRequestCh:
 			tab.handleTrackRequest(op)
@@ -416,19 +387,14 @@ loop:
 		case <-refresh.C:
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
-				gopool.Submit(func() {
-					tab.doRefresh(refreshDone)
-				})
+				go tab.doRefresh(refreshDone)
 			}
 
 		case req := <-tab.refreshReq:
 			waiting = append(waiting, req)
 			if refreshDone == nil {
 				refreshDone = make(chan struct{})
-				gopool.Submit(
-					func() {
-						tab.doRefresh(refreshDone)
-					})
+				go tab.doRefresh(refreshDone)
 			}
 
 		case <-refreshDone:
@@ -486,7 +452,9 @@ func (tab *Table) loadSeedNodes() {
 			addr, _ := seed.UDPEndpoint()
 			tab.log.Trace("Found seed node in database", "id", seed.ID(), "addr", addr, "age", age)
 		}
-		go tab.handleAddNode(addNodeOp{node: seed, isInbound: false})
+		tab.mutex.Lock()
+		tab.handleAddNode(addNodeOp{node: seed, isInbound: false})
+		tab.mutex.Unlock()
 	}
 }
 
@@ -506,21 +474,6 @@ func (tab *Table) bucketAtDistance(d int) *bucket {
 		return tab.buckets[0]
 	}
 	return tab.buckets[d-bucketMinDistance-1]
-}
-
-func (tab *Table) filterNode(n *enode.Node) bool {
-	if tab.enrFilter == nil {
-		return false
-	}
-	if node, err := tab.net.RequestENR(n); err != nil {
-		// If the ENR request fails, we assume the node is not valid, and try to add it to the table next time.
-		tab.log.Trace("ENR request failed", "id", n.ID(), "ipAddr", n.IPAddr(), "updPort", n.UDP(), "err", err)
-		return true
-	} else if !tab.enrFilter(node.Record()) {
-		tab.log.Trace("ENR record filter out", "id", n.ID(), "ipAddr", n.IPAddr(), "updPort", n.UDP())
-		return true
-	}
-	return false
 }
 
 func (tab *Table) addIP(b *bucket, ip netip.Addr) bool {
@@ -556,15 +509,6 @@ func (tab *Table) handleAddNode(req addNodeOp) bool {
 	if req.node.ID() == tab.self().ID() {
 		return false
 	}
-
-	if tab.filterNode(req.node) {
-		return false
-	}
-
-	tab.log.Trace("ENR record filter passed", "id", req.node.ID(), "ipAddr", req.node.IPAddr(), "updPort", req.node.UDP())
-	tab.mutex.Lock()
-	defer tab.mutex.Unlock()
-
 	// For nodes from inbound contact, there is an additional safety measure: if the table
 	// is still initializing the node is not added.
 	if req.isInbound && !tab.isInitDone() {
@@ -593,7 +537,6 @@ func (tab *Table) handleAddNode(req addNodeOp) bool {
 		wn.livenessChecks = 1
 		wn.isValidatedLive = true
 	}
-
 	b.entries = append(b.entries, wn)
 	b.replacements = deleteNode(b.replacements, wn.ID())
 	tab.nodeAdded(b, wn)
@@ -724,6 +667,8 @@ func (tab *Table) handleTrackRequest(op trackRequestOp) {
 	}
 
 	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
+
 	b := tab.bucket(op.node.ID())
 	// Remove the node from the local table if it fails to return anything useful too
 	// many times, but only if there are enough other nodes in the bucket. This latter
@@ -732,11 +677,10 @@ func (tab *Table) handleTrackRequest(op trackRequestOp) {
 	if fails >= maxFindnodeFailures && len(b.entries) >= bucketSize/4 {
 		tab.deleteInBucket(b, op.node.ID())
 	}
-	tab.mutex.Unlock()
 
 	// Add found nodes.
 	for _, n := range op.foundNodes {
-		go tab.handleAddNode(addNodeOp{n, false, false, false})
+		tab.handleAddNode(addNodeOp{n, false, false})
 	}
 }
 

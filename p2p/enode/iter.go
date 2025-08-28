@@ -20,8 +20,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/ethereum/go-ethereum/common/gopool"
 )
 
 // Iterator represents a sequence of nodes. The Next method moves to the next node in the
@@ -361,9 +359,7 @@ func (m *FairMix) AddSource(it Iterator) {
 		timeout: m.timeout,
 	}
 	m.sources = append(m.sources, source)
-	gopool.Submit(func() {
-		m.runSource(m.closed, source)
-	})
+	go m.runSource(m.closed, source)
 }
 
 // Close shuts down the mixer and all current sources.

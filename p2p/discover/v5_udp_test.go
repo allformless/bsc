@@ -912,10 +912,12 @@ func (test *udpV5Test) waitPacketOut(validate interface{}) (closed bool) {
 	}
 	if err == errTimeout {
 		test.t.Fatalf("timed out waiting for %v", exptype)
+		return false
 	}
 	ln := test.nodesByIP[dgram.to.Addr()]
 	if ln == nil {
 		test.t.Fatalf("attempt to send to non-existing node %v", &dgram.to)
+		return false
 	}
 	codec := &testCodec{test: test, id: ln.ID()}
 	frame, p, err := codec.decodeFrame(dgram.data)

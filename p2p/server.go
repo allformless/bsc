@@ -26,16 +26,13 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"regexp"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/mclock"
-	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
@@ -43,7 +40,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 const (
@@ -67,10 +63,6 @@ const (
 var (
 	errServerStopped     = errors.New("server stopped")
 	errEncHandshakeError = errors.New("rlpx enc error")
-
-	// magicEnodeID is a special enode ID that can be used to disconnect all peers
-	// enode://1dd9d65c4552b5eb43d5ad55a2ee3f56c6cbc1c64a5c8d659f51fcd51bace24351232b8d7821617d2b29b54b81cdefb9b3e9c37d7fd5f63270bcc9e1a6f6a439
-	magicEnodeID = enode.ID{52, 49, 195, 147, 158, 30, 226, 166, 52, 94, 151, 106, 130, 52, 249, 135, 1, 82, 214, 72, 121, 243, 11, 194, 114, 160, 116, 246, 133, 158, 117, 232}
 )
 
 type protoHandshakeError struct{ err error }
@@ -105,9 +97,6 @@ type Server struct {
 	discmix   *enode.FairMix
 	dialsched *dialScheduler
 
-	forkFilter     forkid.Filter
-	peerNameFilter []*regexp.Regexp
-
 	// This is read by the NAT port mapping loop.
 	portMappingRegister chan *portMapping
 
@@ -122,8 +111,7 @@ type Server struct {
 	checkpointAddPeer       chan *conn
 
 	// State of run loop and listenLoop.
-	inboundHistory     expHeap
-	disconnectEnodeSet map[enode.ID]struct{}
+	inboundHistory expHeap
 }
 
 type peerOpFunc func(map[enode.ID]*Peer)
@@ -260,16 +248,8 @@ func (srv *Server) RemovePeer(node *enode.Node) {
 		ch  chan *PeerEvent
 		sub event.Subscription
 	)
-
 	// Disconnect the peer on the main loop.
 	srv.doPeerOp(func(peers map[enode.ID]*Peer) {
-		// Special case: sending a disconnect request with a hardcoded enode ID will reset the disconnect enode set
-		if node.ID() == magicEnodeID {
-			srv.disconnectEnodeSet = make(map[enode.ID]struct{})
-			srv.log.Debug("Reset disconnect enode set")
-			return
-		}
-
 		srv.dialsched.removeStatic(node)
 		if peer := peers[node.ID()]; peer != nil {
 			ch = make(chan *PeerEvent, 1)
@@ -347,18 +327,7 @@ func (srv *Server) Stop() {
 	}
 	close(srv.quit)
 	srv.lock.Unlock()
-
-	stopChan := make(chan struct{})
-	go func() {
-		srv.loopWG.Wait()
-		close(stopChan)
-	}()
-
-	select {
-	case <-stopChan:
-	case <-time.After(defaultDialTimeout): // we should use defaultDialTimeout as we can dial just before the shutdown
-		srv.log.Warn("stop p2p server timeout, forcing stop")
-	}
+	srv.loopWG.Wait()
 }
 
 // sharedUDPConn implements a shared connection. Write sends messages to the underlying connection while read returns
@@ -425,7 +394,6 @@ func (srv *Server) Start() (err error) {
 	srv.removetrusted = make(chan *enode.Node)
 	srv.peerOp = make(chan peerOpFunc)
 	srv.peerOpDone = make(chan struct{})
-	srv.disconnectEnodeSet = make(map[enode.ID]struct{})
 
 	if err := srv.setupLocalNode(); err != nil {
 		return err
@@ -441,15 +409,6 @@ func (srv *Server) Start() (err error) {
 		return err
 	}
 	srv.setupDialScheduler()
-
-	if srv.PeerFilterPatterns != nil {
-		pat, err := compilePeerFilterPatterns(srv.PeerFilterPatterns)
-		if err != nil {
-			log.Error("Failed to compile peer filter patterns", "err", err)
-			pat = nil
-		}
-		srv.peerNameFilter = pat
-	}
 
 	srv.loopWG.Add(1)
 	go srv.run()
@@ -496,24 +455,6 @@ func (srv *Server) setupDiscovery() error {
 		return err
 	}
 
-	// ENR filter function
-	var f discover.NodeFilterFunc
-	if srv.Config.EnableENRFilter {
-		f = func(r *enr.Record) bool {
-			if srv.forkFilter == nil {
-				return true
-			}
-			var eth struct {
-				ForkID forkid.ID
-				Tail   []rlp.RawValue `rlp:"tail"`
-			}
-			if r.Load(enr.WithEntry("eth", &eth)) != nil {
-				return false
-			}
-			return srv.forkFilter(eth.ForkID) == nil
-		}
-	}
-
 	var (
 		sconn     discover.UDPConn = conn
 		unhandled chan discover.ReadPacket
@@ -528,12 +469,11 @@ func (srv *Server) setupDiscovery() error {
 	// Start discovery services.
 	if srv.Config.DiscoveryV4 {
 		cfg := discover.Config{
-			PrivateKey:     srv.PrivateKey,
-			NetRestrict:    srv.NetRestrict,
-			Bootnodes:      srv.BootstrapNodes,
-			Unhandled:      unhandled,
-			Log:            srv.log,
-			FilterFunction: f,
+			PrivateKey:  srv.PrivateKey,
+			NetRestrict: srv.NetRestrict,
+			Bootnodes:   srv.BootstrapNodes,
+			Unhandled:   unhandled,
+			Log:         srv.log,
 		}
 		ntab, err := discover.ListenV4(conn, srv.localnode, cfg)
 		if err != nil {
@@ -543,11 +483,10 @@ func (srv *Server) setupDiscovery() error {
 	}
 	if srv.Config.DiscoveryV5 {
 		cfg := discover.Config{
-			PrivateKey:     srv.PrivateKey,
-			NetRestrict:    srv.NetRestrict,
-			Bootnodes:      srv.BootstrapNodesV5,
-			Log:            srv.log,
-			FilterFunction: f,
+			PrivateKey:  srv.PrivateKey,
+			NetRestrict: srv.NetRestrict,
+			Bootnodes:   srv.BootstrapNodesV5,
+			Log:         srv.log,
 		}
 		srv.discv5, err = discover.ListenV5(sconn, srv.localnode, cfg)
 		if err != nil {
@@ -605,15 +544,8 @@ func (srv *Server) MaxInboundConns() int {
 	return srv.MaxPeers - srv.MaxDialedConns()
 }
 
-func (srv *Server) SetFilter(f forkid.Filter) {
-	srv.forkFilter = f
-}
-
 func (srv *Server) MaxDialedConns() (limit int) {
-	if srv.NoDial {
-		return len(srv.StaticNodes)
-	}
-	if srv.MaxPeers == 0 {
+	if srv.NoDial || srv.MaxPeers == 0 {
 		return 0
 	}
 	if srv.DialRatio == 0 {
@@ -777,9 +709,6 @@ running:
 		case pd := <-srv.delpeer:
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
-			if !pd.requested && pd.err == DiscRequested {
-				srv.disconnectEnodeSet[pd.ID()] = struct{}{}
-			}
 			delete(peers, pd.ID())
 			srv.log.Debug("Removing p2p peer", "peercount", len(peers), "id", pd.ID(), "duration", d, "req", pd.requested, "err", pd.err)
 			srv.dialsched.peerRemoved(pd.rw)
@@ -836,19 +765,6 @@ func (srv *Server) addPeerChecks(peers map[enode.ID]*Peer, inboundCount int, c *
 	if len(srv.Protocols) > 0 && countMatchingProtocols(srv.Protocols, c.caps) == 0 {
 		return DiscUselessPeer
 	}
-
-	if _, ok := srv.disconnectEnodeSet[c.node.ID()]; ok {
-		return errors.New("explicitly disconnected peer previously")
-	}
-
-	if srv.peerNameFilter != nil {
-		for _, re := range srv.peerNameFilter {
-			if re.MatchString(c.name) {
-				return errors.New("peer name matches filter")
-			}
-		}
-	}
-
 	// Repeat the post-handshake checks because the
 	// peer set might have changed since those checks were performed.
 	return srv.postHandshakeChecks(peers, inboundCount, c)
@@ -916,10 +832,10 @@ func (srv *Server) listenLoop() {
 			serveMeter.Mark(1)
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
-		gopool.Submit(func() {
+		go func() {
 			srv.SetupConn(fd, inboundConn, nil)
 			slots <- struct{}{}
-		})
+		}()
 	}
 }
 
@@ -928,7 +844,6 @@ func (srv *Server) checkInboundConn(remoteIP netip.Addr) error {
 		// This case happens for internal test connections without remote address.
 		return nil
 	}
-
 	// Reject connections that do not match NetRestrict.
 	if srv.NetRestrict != nil && !srv.NetRestrict.ContainsAddr(remoteIP) {
 		return errors.New("not in netrestrict list")
@@ -1051,9 +966,7 @@ func (srv *Server) launchPeer(c *conn) *Peer {
 		// to the peer.
 		p.events = &srv.peerFeed
 	}
-	gopool.Submit(func() {
-		srv.runPeer(p)
-	})
+	go srv.runPeer(p)
 	return p
 }
 
@@ -1149,16 +1062,4 @@ func (srv *Server) PeersInfo() []*PeerInfo {
 	})
 
 	return infos
-}
-
-func compilePeerFilterPatterns(pat []string) ([]*regexp.Regexp, error) {
-	var filters []*regexp.Regexp
-	for _, filter := range pat {
-		r, err := regexp.Compile(filter)
-		if err != nil {
-			return nil, err
-		}
-		filters = append(filters, r)
-	}
-	return filters, nil
 }

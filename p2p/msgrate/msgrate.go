@@ -378,7 +378,10 @@ func (t *Trackers) TargetTimeout() time.Duration {
 // targetTimeout is the internal lockless version of TargetTimeout to be used
 // during QoS tuning.
 func (t *Trackers) targetTimeout() time.Duration {
-	timeout := min(time.Duration(ttlScaling*float64(t.roundtrip)/t.confidence), t.OverrideTTLLimit)
+	timeout := time.Duration(ttlScaling * float64(t.roundtrip) / t.confidence)
+	if timeout > t.OverrideTTLLimit {
+		timeout = t.OverrideTTLLimit
+	}
 	return timeout
 }
 

@@ -29,7 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -181,13 +180,8 @@ func newDialScheduler(config dialConfig, it enode.Iterator, setupFunc dialSetupF
 	d.lastStatsLog = d.clock.Now()
 	d.ctx, d.cancel = context.WithCancel(context.Background())
 	d.wg.Add(2)
-	gopool.Submit(func() {
-		d.readNodes(it)
-	})
-	gopool.Submit(
-		func() {
-			d.loop(it)
-		})
+	go d.readNodes(it)
+	go d.loop(it)
 	return d
 }
 
@@ -509,10 +503,10 @@ func (d *dialScheduler) startDial(task *dialTask) {
 	hkey := string(node.ID().Bytes())
 	d.history.add(hkey, d.clock.Now().Add(dialHistoryExpiration))
 	d.dialing[node.ID()] = task
-	gopool.Submit(func() {
+	go func() {
 		task.run(d)
 		d.doneCh <- task
-	})
+	}()
 }
 
 // A dialTask generated for each node that is dialed.

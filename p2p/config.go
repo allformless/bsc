@@ -21,7 +21,6 @@ import (
 	"encoding"
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -39,10 +38,6 @@ type Config struct {
 	// MaxPeers is the maximum number of peers that can be
 	// connected. It must be greater than zero.
 	MaxPeers int
-
-	// MaxPeersPerIP is the maximum number of peers that can be
-	// connected from a single IP. It must be greater than zero.
-	MaxPeersPerIP int `toml:",omitempty"`
 
 	// MaxPendingPeers is the maximum number of peers that can be pending in the
 	// handshake phase, counted separately for inbound and outbound connections.
@@ -77,11 +72,6 @@ type Config struct {
 	// protocol.
 	BootstrapNodesV5 []*enode.Node `toml:",omitempty"`
 
-	// EnableENRFilter enables the ENR filter for the discovery protocol.
-	// TODO(galaio): add a switch with a default value of false has been added to avoid compatibility issues.
-	// After the node version is upgraded for a while, it can be set to true by default.
-	EnableENRFilter bool `toml:",omitempty"`
-
 	// Static nodes are used as pre-configured connections which are always
 	// maintained and re-connected on disconnects.
 	StaticNodes []*enode.Node
@@ -89,14 +79,6 @@ type Config struct {
 	// Trusted nodes are used as pre-configured connections which are always
 	// allowed to connect, even above the peer limit.
 	TrustedNodes []*enode.Node
-
-	// EVNNodeIdsWhitelist is a list of NodeIDs that should be directly broadcast block to
-	// the list is another choice for non-validator nodes to get block quickly
-	EVNNodeIdsWhitelist []enode.ID `toml:",omitempty"`
-
-	// ProxyedValidatorAddresses is a list of validator addresses that the local node proxies,
-	// it usually used for sentry nodes
-	ProxyedValidatorAddresses []common.Address `toml:",omitempty"`
 
 	// Connectivity can be restricted to certain IP networks.
 	// If this option is set to a non-nil value, only hosts which match one of the
@@ -142,8 +124,6 @@ type Config struct {
 
 	// Logger is a custom logger to use with the p2p.Server.
 	Logger log.Logger `toml:"-"`
-
-	PeerFilterPatterns []string
 
 	clock mclock.Clock
 }
