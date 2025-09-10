@@ -19,6 +19,8 @@ package rawdb
 import (
 	"fmt"
 	"math"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/rlp"
@@ -65,6 +67,10 @@ func (batch *freezerBatch) commit() (item uint64, writeSize int64, err error) {
 	// Check that count agrees on all batches.
 	item = uint64(math.MaxUint64)
 	for name, tb := range batch.tables {
+		// skip empty addition tables
+		if slices.Contains(additionTables, name) && EmptyTable(tb.t) {
+			continue
+		}
 		if item < math.MaxUint64 && tb.curItem != item {
 			return 0, 0, fmt.Errorf("table %s is at item %d, want %d", name, tb.curItem, item)
 		}
@@ -107,7 +113,8 @@ func (t *freezerTable) newBatch() *freezerTableBatch {
 func (batch *freezerTableBatch) reset() {
 	batch.dataBuffer = batch.dataBuffer[:0]
 	batch.indexBuffer = batch.indexBuffer[:0]
-	batch.curItem = batch.t.items.Load()
+	curItem := batch.t.items.Load()
+	batch.curItem = atomic.LoadUint64(&curItem)
 	batch.totalBytes = 0
 }
 
@@ -201,7 +208,8 @@ func (batch *freezerTableBatch) commit() error {
 
 	// Update headBytes of table.
 	batch.t.headBytes += dataSize
-	batch.t.items.Store(batch.curItem)
+	items := batch.curItem
+	batch.t.items.Store(items)
 
 	// Update metrics.
 	batch.t.sizeGauge.Inc(dataSize + indexSize)

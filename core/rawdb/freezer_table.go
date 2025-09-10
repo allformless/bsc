@@ -46,6 +46,8 @@ var (
 
 	// errNotSupported is returned if the database doesn't support the required operation.
 	errNotSupported = errors.New("this operation is not supported")
+
+	errTruncationBelowTail = errors.New("truncation below tail")
 )
 
 // indexEntry contains the number/id of the file that the data resides in, as well as the
@@ -149,12 +151,20 @@ func newTable(path string, name string, readMeter, writeMeter *metrics.Meter, si
 		meta  *os.File
 	)
 	if readonly {
-		// Will fail if table index file or meta file is not existent
+		// Will fail if table doesn't exist
 		index, err = openFreezerFileForReadOnly(filepath.Join(path, idxName))
 		if err != nil {
 			return nil, err
 		}
-		meta, err = openFreezerFileForReadOnly(filepath.Join(path, fmt.Sprintf("%s.meta", name)))
+		// TODO(rjl493456442) change it to read-only mode. Open the metadata file
+		// in rw mode. It's a temporary solution for now and should be changed
+		// whenever the tail deletion is actually used. The reason for this hack is
+		// the additional meta file for each freezer table is added in order to support
+		// tail deletion, but for most legacy nodes this file is missing. This check
+		// will suddenly break lots of database relevant commands. So the metadata file
+		// is always opened for mutation and nothing else will be written except
+		// the initialization.
+		meta, err = openFreezerFileForAppend(filepath.Join(path, fmt.Sprintf("%s.meta", name)))
 		if err != nil {
 			return nil, err
 		}
@@ -607,7 +617,7 @@ func (t *freezerTable) truncateHead(items uint64) error {
 		return nil
 	}
 	if items < t.itemHidden.Load() {
-		return errors.New("truncation below tail")
+		return errTruncationBelowTail
 	}
 	// We need to truncate, save the old size for metrics tracking
 	oldSize, err := t.sizeNolock()
@@ -1233,4 +1243,118 @@ func (t *freezerTable) dumpIndex(w io.Writer, start, stop int64) {
 		}
 	}
 	fmt.Fprintf(w, "|--------------------------|\n")
+}
+
+func (t *freezerTable) ResetItemsOffset(virtualTail uint64) error {
+	stat, err := t.index.Stat()
+	if err != nil {
+		return err
+	}
+
+	if stat.Size() == 0 {
+		return errors.New("Stat size is zero when ResetVirtualTail.")
+	}
+
+	var firstIndex indexEntry
+
+	buffer := make([]byte, indexEntrySize)
+
+	t.index.ReadAt(buffer, 0)
+	firstIndex.unmarshalBinary(buffer)
+
+	firstIndex.offset = uint32(virtualTail)
+	t.index.WriteAt(firstIndex.append(nil), 0)
+
+	var firstIndex2 indexEntry
+	buffer2 := make([]byte, indexEntrySize)
+	t.index.ReadAt(buffer2, 0)
+	firstIndex2.unmarshalBinary(buffer2)
+
+	log.Info("Reset Index", "filenum", t.index.Name(), "offset", firstIndex2.offset)
+
+	return nil
+}
+
+// resetItems reset freezer table to 0 items with new startAt
+// only used for ChainFreezerBlobSidecarTable now
+func (t *freezerTable) resetItems(startAt uint64) (*freezerTable, error) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	if t.readonly {
+		return nil, errors.New("resetItems in readonly mode")
+	}
+
+	// remove all data files
+	t.head.Close()
+	t.releaseFilesAfter(0, true)
+	t.releaseFile(0)
+
+	// overwrite metadata file
+	t.metadata.setVirtualTail(startAt, false)
+	if err := t.metadata.write(true); err != nil {
+		return nil, err
+	}
+	t.metadata.file.Close()
+
+	// recreate the index file
+	t.index.Close()
+	os.Remove(t.index.Name())
+	var idxName string
+	if t.config.noSnappy {
+		idxName = fmt.Sprintf("%s.ridx", t.name) // raw index file
+	} else {
+		idxName = fmt.Sprintf("%s.cidx", t.name) // compressed index file
+	}
+	index, err := openFreezerFileForAppend(filepath.Join(t.path, idxName))
+	if err != nil {
+		return nil, err
+	}
+	tailIndex := indexEntry{
+		filenum: 0,
+		offset:  uint32(startAt),
+	}
+	if _, err = index.Write(tailIndex.append(nil)); err != nil {
+		return nil, err
+	}
+	if err := index.Sync(); err != nil {
+		return nil, err
+	}
+	index.Close()
+
+	return newFreezerTable(t.path, t.name, t.config, t.readonly)
+}
+
+// resetTailMeta reset freezer table with new legacyOffset
+// Caution: the table cannot be used anymore, it will sync/close all data files
+func (t *freezerTable) resetTailMeta(legacyOffset uint64) error {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	if t.readonly {
+		return errors.New("resetItems in readonly mode")
+	}
+
+	// if the table enable the tail truncation, add the hidden items
+	legacyOffset += t.itemHidden.Load()
+
+	// overwrite metadata file
+	t.metadata.setVirtualTail(legacyOffset, true)
+	if t.metadata.flushOffset < int64(legacyOffset) {
+		t.metadata.setFlushOffset(int64(legacyOffset), true)
+	}
+
+	// overwrite first index
+	var firstIndex indexEntry
+	buffer := make([]byte, indexEntrySize)
+	t.index.ReadAt(buffer, 0)
+	firstIndex.unmarshalBinary(buffer)
+	firstIndex.offset = uint32(legacyOffset)
+	if _, err := t.index.WriteAt(firstIndex.append(nil), 0); err != nil {
+		return err
+	}
+	if err := t.index.Sync(); err != nil {
+		return err
+	}
+	t.index.Close()
+
+	return nil
 }

@@ -44,6 +44,16 @@ const HashScheme = "hash"
 // on extra state diffs to survive deep reorg.
 const PathScheme = "path"
 
+// ReadAccountTrieNodeAndHash retrieves the account trie node and the associated node
+// hash with the specified node path.
+func ReadAccountTrieNodeAndHash(db ethdb.KeyValueReader, path []byte) ([]byte, common.Hash) {
+	data, err := db.Get(accountTrieNodeKey(path))
+	if err != nil {
+		return nil, common.Hash{}
+	}
+	return data, crypto.Keccak256Hash(data)
+}
+
 // ReadAccountTrieNode retrieves the account trie node with the specified node path.
 func ReadAccountTrieNode(db ethdb.KeyValueReader, path []byte) []byte {
 	data, _ := db.Get(accountTrieNodeKey(path))
@@ -72,6 +82,16 @@ func DeleteAccountTrieNode(db ethdb.KeyValueWriter, path []byte) {
 	if err := db.Delete(accountTrieNodeKey(path)); err != nil {
 		log.Crit("Failed to delete account trie node", "err", err)
 	}
+}
+
+// ReadStorageTrieNodeAndHash retrieves the storage trie node and the associated node
+// hash with the specified node path.
+func ReadStorageTrieNodeAndHash(db ethdb.KeyValueReader, accountHash common.Hash, path []byte) ([]byte, common.Hash) {
+	data, err := db.Get(storageTrieNodeKey(accountHash, path))
+	if err != nil {
+		return nil, common.Hash{}
+	}
+	return data, crypto.Keccak256Hash(data)
 }
 
 // ReadStorageTrieNode retrieves the storage trie node with the specified node path.
@@ -223,12 +243,12 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, owner common.Hash, path []byte, has
 // if the state is not present in database.
 func ReadStateScheme(db ethdb.Database) string {
 	// Check if state in path-based scheme is present.
-	if HasAccountTrieNode(db, nil) {
+	if HasAccountTrieNode(db.StateStoreReader(), nil) {
 		return PathScheme
 	}
 	// The root node might be deleted during the initial snap sync, check
 	// the persistent state id then.
-	if id := ReadPersistentStateID(db); id != 0 {
+	if id := ReadPersistentStateID(db.StateStoreReader()); id != 0 {
 		return PathScheme
 	}
 	// Check if verkle state in path-based scheme is present.
@@ -248,10 +268,19 @@ func ReadStateScheme(db ethdb.Database) string {
 	if header == nil {
 		return "" // empty datadir
 	}
-	if !HasLegacyTrieNode(db, header.Root) {
+	if !HasLegacyTrieNode(db.StateStoreReader(), header.Root) {
 		return "" // no state in disk
 	}
 	return HashScheme
+}
+
+// ValidateStateScheme used to check state scheme whether is valid.
+// Valid state scheme: hash and path.
+func ValidateStateScheme(stateScheme string) bool {
+	if stateScheme == HashScheme || stateScheme == PathScheme {
+		return true
+	}
+	return false
 }
 
 // ParseStateScheme checks if the specified state scheme is compatible with
@@ -272,10 +301,10 @@ func ParseStateScheme(provided string, disk ethdb.Database) (string, error) {
 	stored := ReadStateScheme(disk)
 	if provided == "" {
 		if stored == "" {
-			log.Info("State schema set to default", "scheme", "path")
+			log.Info("State scheme set to default", "scheme", "path")
 			return PathScheme, nil // use default scheme for empty database
 		}
-		log.Info("State scheme set to already existing", "scheme", stored)
+		log.Info("State scheme set to already existing disk db", "scheme", stored)
 		return stored, nil // reuse scheme of persistent scheme
 	}
 	// If state scheme is specified, ensure it's valid.
@@ -288,5 +317,5 @@ func ParseStateScheme(provided string, disk ethdb.Database) (string, error) {
 		log.Info("State scheme set by user", "scheme", provided)
 		return provided, nil
 	}
-	return "", fmt.Errorf("incompatible state scheme, stored: %s, provided: %s", stored, provided)
+	return "", fmt.Errorf("incompatible state scheme, stored: %s, user provided: %s", stored, provided)
 }

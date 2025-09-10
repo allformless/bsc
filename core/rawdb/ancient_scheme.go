@@ -35,17 +35,24 @@ const (
 
 	// ChainFreezerReceiptTable indicates the name of the freezer receipts table.
 	ChainFreezerReceiptTable = "receipts"
+
+	// ChainFreezerDifficultyTable indicates the name of the freezer total difficulty table.
+	ChainFreezerDifficultyTable = "diffs"
+
+	// ChainFreezerBlobSidecarTable indicates the name of the freezer total blob table.
+	ChainFreezerBlobSidecarTable = "blobs"
 )
 
 // chainFreezerTableConfigs configures the settings for tables in the chain freezer.
-// Compression is disabled for hashes as they don't compress well. Additionally,
-// tail truncation is disabled for the header and hash tables, as these are intended
-// to be retained long-term.
+// Compression is disabled for hashes as they don't compress well.
+// TODO(Nathan): setting prunable properly
 var chainFreezerTableConfigs = map[string]freezerTableConfig{
-	ChainFreezerHeaderTable:  {noSnappy: false, prunable: false},
-	ChainFreezerHashTable:    {noSnappy: true, prunable: false},
-	ChainFreezerBodiesTable:  {noSnappy: false, prunable: true},
-	ChainFreezerReceiptTable: {noSnappy: false, prunable: true},
+	ChainFreezerHeaderTable:      {noSnappy: false, prunable: true},
+	ChainFreezerHashTable:        {noSnappy: true, prunable: true},
+	ChainFreezerBodiesTable:      {noSnappy: false, prunable: true},
+	ChainFreezerReceiptTable:     {noSnappy: false, prunable: true},
+	ChainFreezerDifficultyTable:  {noSnappy: true, prunable: true},
+	ChainFreezerBlobSidecarTable: {noSnappy: false, prunable: true},
 }
 
 // freezerTableConfig contains the settings for a freezer table.
@@ -53,6 +60,8 @@ type freezerTableConfig struct {
 	noSnappy bool // disables item compression
 	prunable bool // true for tables that can be pruned by TruncateTail
 }
+
+var additionTables = []string{ChainFreezerBlobSidecarTable}
 
 const (
 	// stateHistoryTableSize defines the maximum size of freezer data files.

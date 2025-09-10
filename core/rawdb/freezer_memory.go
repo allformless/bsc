@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -184,6 +185,10 @@ func (b *memoryBatch) commit(freezer *MemoryFreezer) (items uint64, writeSize in
 	// Check that count agrees on all batches.
 	items = math.MaxUint64
 	for name, next := range b.next {
+		// skip empty addition tables
+		if slices.Contains(additionTables, name) && next == 0 {
+			continue
+		}
 		if items < math.MaxUint64 && next != items {
 			return 0, 0, fmt.Errorf("table %s is at item %d, want %d", name, next, items)
 		}
@@ -365,7 +370,10 @@ func (f *MemoryFreezer) TruncateTail(tail uint64) (uint64, error) {
 	if old >= tail {
 		return old, nil
 	}
-	for _, table := range f.tables {
+	for kind, table := range f.tables {
+		if slices.Contains(additionTables, kind) && table.items == 0 {
+			continue
+		}
 		if table.config.prunable {
 			if err := table.truncateTail(tail); err != nil {
 				return 0, err
@@ -405,6 +413,16 @@ func (f *MemoryFreezer) Reset() error {
 	f.tables = tables
 	f.items, f.tail = 0, 0
 	return nil
+}
+
+func (f *MemoryFreezer) TruncateTableTail(kind string, tail uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (f *MemoryFreezer) ResetTable(kind string, startAt uint64, onlyEmpty bool) error {
+	//TODO implement me
+	panic("not supported")
 }
 
 // AncientDatadir returns the path of the ancient store.
