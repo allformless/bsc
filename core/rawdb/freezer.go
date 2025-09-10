@@ -22,7 +22,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -79,7 +78,6 @@ type Freezer struct {
 //
 // The 'tables' argument defines the data tables. If the value of a map
 // entry is true, snappy compression is disabled for the table.
-// additionTables indicates the new add tables for freezerDB, it has some special rules.
 func NewFreezer(datadir string, namespace string, readonly bool, maxTableSize uint32, tables map[string]freezerTableConfig) (*Freezer, error) {
 	// Create the initial freezer object
 	var (
@@ -124,15 +122,7 @@ func NewFreezer(datadir string, namespace string, readonly bool, maxTableSize ui
 
 	// Create the tables.
 	for name, config := range tables {
-		var (
-			table *freezerTable
-			err   error
-		)
-		if slices.Contains(additionTables, name) {
-			table, err = openAdditionTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, config, readonly)
-		} else {
-			table, err = newTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, config, readonly)
-		}
+		table, err := newTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, config, readonly)
 		if err != nil {
 			for _, table := range freezer.tables {
 				table.Close()
@@ -162,22 +152,8 @@ func NewFreezer(datadir string, namespace string, readonly bool, maxTableSize ui
 	// Create the write batch.
 	freezer.writeBatch = newFreezerBatch(freezer)
 
-	log.Info("Opened ancient database", "database", datadir, "readonly", readonly, "tail", freezer.tail.Load(), "frozen", freezer.frozen.Load())
+	log.Info("Opened ancient database", "database", datadir, "readonly", readonly)
 	return freezer, nil
-}
-
-// openAdditionTable create table, it will auto create new files when it was first initialized
-func openAdditionTable(datadir, name string, readMeter, writeMeter *metrics.Meter, sizeGauge *metrics.Gauge, maxTableSize uint32, config freezerTableConfig, readonly bool) (*freezerTable, error) {
-	if readonly {
-		f, err := newTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, config, false)
-		if err != nil {
-			return nil, err
-		}
-		if err = f.Close(); err != nil {
-			return nil, err
-		}
-	}
-	return newTable(datadir, name, readMeter, writeMeter, sizeGauge, maxTableSize, config, readonly)
 }
 
 // Close terminates the chain freezer, closing all the data files.
@@ -228,12 +204,6 @@ func (f *Freezer) AncientRange(kind string, start, count, maxBytes uint64) ([][]
 // Ancients returns the length of the frozen items.
 func (f *Freezer) Ancients() (uint64, error) {
 	return f.frozen.Load(), nil
-}
-
-func (f *Freezer) TableAncients(kind string) (uint64, error) {
-	f.writeLock.RLock()
-	defer f.writeLock.RUnlock()
-	return f.tables[kind].items.Load(), nil
 }
 
 // Tail returns the number of first stored item in the freezer.
@@ -310,23 +280,8 @@ func (f *Freezer) TruncateHead(items uint64) (uint64, error) {
 	if oitems <= items {
 		return oitems, nil
 	}
-	for kind, table := range f.tables {
-		err := table.truncateHead(items)
-		if err == errTruncationBelowTail {
-			// This often happens in chain rewinds, but the blob table is special.
-			// It has the same head, but a different tail from other tables (like bodies, receipts).
-			// So if the chain is rewound to head below the blob's tail, it needs to reset again.
-			if kind != ChainFreezerBlobSidecarTable {
-				return 0, err
-			}
-			nt, err := table.resetItems(items)
-			if err != nil {
-				return 0, err
-			}
-			f.tables[kind] = nt
-			continue
-		}
-		if err != nil {
+	for _, table := range f.tables {
+		if err := table.truncateHead(items); err != nil {
 			return 0, err
 		}
 	}
@@ -347,10 +302,7 @@ func (f *Freezer) TruncateTail(tail uint64) (uint64, error) {
 	if old >= tail {
 		return old, nil
 	}
-	for kind, table := range f.tables {
-		if slices.Contains(additionTables, kind) && EmptyTable(table) {
-			continue
-		}
+	for _, table := range f.tables {
 		if table.config.prunable {
 			if err := table.truncateTail(tail); err != nil {
 				return 0, err
@@ -385,43 +337,21 @@ func (f *Freezer) validate() error {
 		head       uint64
 		prunedTail *uint64
 	)
-	// Hack to get boundary of any table
-	for kind, table := range f.tables {
-		// addition tables is special cases
-		if slices.Contains(additionTables, kind) {
-			continue
-		}
+	// get any head value
+	for _, table := range f.tables {
 		head = table.items.Load()
 		break
 	}
 	for kind, table := range f.tables {
-		// check addition tables, try to align with exist tables
-		if slices.Contains(additionTables, kind) {
-			// if the table is empty, just skip
-			if EmptyTable(table) {
-				continue
-			}
-			// all tables have to have the same head
-			if head != table.items.Load() {
-				return fmt.Errorf("freezer table %s has a differing head: %d != %d", kind, table.items.Load(), head)
-			}
-			// TODO(Jacksen): This error might be unexpected.
-			if prunedTail != nil && *prunedTail > table.itemHidden.Load() {
-				return fmt.Errorf("freezer table %s has differing tail: %d != %d", kind, table.itemHidden.Load(), *prunedTail)
-			}
-			continue
-		}
 		// all tables have to have the same head
 		if head != table.items.Load() {
 			return fmt.Errorf("freezer table %s has a differing head: %d != %d", kind, table.items.Load(), head)
 		}
 		if !table.config.prunable {
-			// TODO(Nathan): In BSC's prune feature, `table.itemHidden.Load() != 0` may return true.
-			//
 			// non-prunable tables have to start at 0
-			// if table.itemHidden.Load() != 0 {
-			// 	return fmt.Errorf("non-prunable freezer table '%s' has a non-zero tail: %d", kind, table.itemHidden.Load())
-			// }
+			if table.itemHidden.Load() != 0 {
+				return fmt.Errorf("non-prunable freezer table '%s' has a non-zero tail: %d", kind, table.itemHidden.Load())
+			}
 		} else {
 			// prunable tables have to have the same length
 			if prunedTail == nil {
@@ -450,48 +380,22 @@ func (f *Freezer) repair() error {
 		head       = uint64(math.MaxUint64)
 		prunedTail = uint64(0)
 	)
-	for kind, table := range f.tables {
-		// addition tables only align head
-		if slices.Contains(additionTables, kind) {
-			if EmptyTable(table) {
-				continue
-			}
-			head = min(head, table.items.Load())
-			continue
-		}
+	// get the minimal head and the maximum tail
+	for _, table := range f.tables {
 		head = min(head, table.items.Load())
 		prunedTail = max(prunedTail, table.itemHidden.Load())
 	}
+	// apply the pruning
 	for kind, table := range f.tables {
-		//  try to align with exist tables, skip empty table
-		if slices.Contains(additionTables, kind) && EmptyTable(table) {
-			continue
-		}
-		err := table.truncateHead(head)
-		if err == errTruncationBelowTail {
-			// This often happens in chain rewinds, but the blob table is special.
-			// It has the same head, but a different tail from other tables (like bodies, receipts).
-			// So if the chain is rewound to head below the blob's tail, it needs to reset again.
-			if kind != ChainFreezerBlobSidecarTable {
-				return err
-			}
-			nt, err := table.resetItems(head)
-			if err != nil {
-				return err
-			}
-			f.tables[kind] = nt
-			continue
-		}
-		if err != nil {
+		// all tables need to have the same head
+		if err := table.truncateHead(head); err != nil {
 			return err
 		}
 		if !table.config.prunable {
-			// TODO(Nathan): In BSC's prune feature, `table.itemHidden.Load() != 0` may return true.
-			//
 			// non-prunable tables have to start at 0
-			// if table.itemHidden.Load() != 0 {
-			// 	panic(fmt.Sprintf("non-prunable freezer table %s has non-zero tail: %v", kind, table.itemHidden.Load()))
-			// }
+			if table.itemHidden.Load() != 0 {
+				panic(fmt.Sprintf("non-prunable freezer table %s has non-zero tail: %v", kind, table.itemHidden.Load()))
+			}
 		} else {
 			// prunable tables have to have the same length
 			if err := table.truncateTail(prunedTail); err != nil {
@@ -503,98 +407,4 @@ func (f *Freezer) repair() error {
 	f.frozen.Store(head)
 	f.tail.Store(prunedTail)
 	return nil
-}
-
-// TruncateTableTail will truncate certain table to new tail
-func (f *Freezer) TruncateTableTail(kind string, tail uint64) (uint64, error) {
-	if f.readonly {
-		return 0, errReadOnly
-	}
-
-	f.writeLock.Lock()
-	defer f.writeLock.Unlock()
-
-	if !slices.Contains(additionTables, kind) {
-		return 0, errors.New("only new added table could be truncated independently")
-	}
-	t, exist := f.tables[kind]
-	if !exist {
-		return 0, errors.New("you reset a non-exist table")
-	}
-
-	old := t.itemHidden.Load()
-	if err := t.truncateTail(tail); err != nil {
-		return 0, err
-	}
-	return old, nil
-}
-
-// ResetTable will reset certain table with new start point
-// only used for ChainFreezerBlobSidecarTable now
-func (f *Freezer) ResetTable(kind string, startAt uint64, onlyEmpty bool) error {
-	if f.readonly {
-		return errReadOnly
-	}
-
-	f.writeLock.Lock()
-	defer f.writeLock.Unlock()
-
-	t, exist := f.tables[kind]
-	if !exist {
-		return errors.New("you reset a non-exist table")
-	}
-
-	// if you reset a non empty table just skip
-	if onlyEmpty && !EmptyTable(t) {
-		return nil
-	}
-
-	if err := f.SyncAncient(); err != nil {
-		return err
-	}
-	nt, err := t.resetItems(startAt)
-	if err != nil {
-		return err
-	}
-	f.tables[kind] = nt
-
-	// repair all tables with same tail & head
-	if err := f.repair(); err != nil {
-		for _, table := range f.tables {
-			table.Close()
-		}
-		return err
-	}
-	f.writeBatch = newFreezerBatch(f)
-	log.Debug("Reset Table", "kind", kind, "tail", f.tables[kind].itemHidden.Load(), "frozen", f.tables[kind].items.Load())
-	return nil
-}
-
-// resetTailMeta will reset tail meta with legacyOffset
-// Caution: the freezer cannot be used anymore, it will sync/close all data files
-func (f *Freezer) resetTailMeta(legacyOffset uint64) error {
-	if f.readonly {
-		return errReadOnly
-	}
-
-	// if the tail is already reset, just skip
-	if f.tail.Load() == legacyOffset {
-		return nil
-	}
-
-	if f.tail.Load() > 0 {
-		return errors.New("the freezer's tail > 0, cannot reset again")
-	}
-	f.writeLock.Lock()
-	defer f.writeLock.Unlock()
-	for _, t := range f.tables {
-		if err := t.resetTailMeta(legacyOffset); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func EmptyTable(t *freezerTable) bool {
-	return t.items.Load() == 0
 }

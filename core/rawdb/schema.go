@@ -88,9 +88,6 @@ var (
 	// database.
 	fastTxLookupLimitKey = []byte("FastTransactionLookupLimit")
 
-	//LastSafePointBlockKey tracks the block number for block state that write disk
-	LastSafePointBlockKey = []byte("LastSafePointBlockNumber")
-
 	// badBlockKey tracks the list of bad blocks seen by local
 	badBlockKey = []byte("InvalidBlock")
 
@@ -105,7 +102,7 @@ var (
 
 	// Data item prefixes (use single byte to avoid mixing data types, avoid `i`, used for indexes).
 	headerPrefix       = []byte("h") // headerPrefix + num (uint64 big endian) + hash -> header
-	headerTDSuffix     = []byte("t") // headerPrefix + num (uint64 big endian) + hash + headerTDSuffix -> td
+	headerTDSuffix     = []byte("t") // headerPrefix + num (uint64 big endian) + hash + headerTDSuffix -> td (deprecated)
 	headerHashSuffix   = []byte("n") // headerPrefix + num (uint64 big endian) + headerHashSuffix -> hash
 	headerNumberPrefix = []byte("H") // headerNumberPrefix + hash -> num (uint64 big endian)
 
@@ -117,6 +114,7 @@ var (
 	SnapshotAccountPrefix = []byte("a") // SnapshotAccountPrefix + account hash -> account trie value
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
+	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
 
 	// Path-based storage scheme of merkle patricia trie.
 	TrieNodeAccountPrefix = []byte("A") // TrieNodeAccountPrefix + hexPath -> trie node
@@ -142,9 +140,10 @@ var (
 	genesisPrefix  = []byte("ethereum-genesis-") // genesis state prefix for the db
 
 	CliqueSnapshotPrefix = []byte("clique-")
-	ParliaSnapshotPrefix = []byte("parlia-")
 
-	BlockBlobSidecarsPrefix = []byte("blobs")
+	BestUpdateKey         = []byte("update-")    // bigEndian64(syncPeriod) -> RLP(types.LightClientUpdate)  (nextCommittee only referenced by root hash)
+	FixedCommitteeRootKey = []byte("fixedRoot-") // bigEndian64(syncPeriod) -> committee root hash
+	SyncCommitteeKey      = []byte("committee-") // bigEndian64(syncPeriod) -> serialized committee
 
 	// new log index
 	filterMapsPrefix         = "fm-"
@@ -186,11 +185,6 @@ func headerKey(number uint64, hash common.Hash) []byte {
 	return append(append(headerPrefix, encodeBlockNumber(number)...), hash.Bytes()...)
 }
 
-// headerTDKey = headerPrefix + num (uint64 big endian) + hash + headerTDSuffix
-func headerTDKey(number uint64, hash common.Hash) []byte {
-	return append(headerKey(number, hash), headerTDSuffix...)
-}
-
 // headerHashKey = headerPrefix + num (uint64 big endian) + headerHashSuffix
 func headerHashKey(number uint64) []byte {
 	return append(append(headerPrefix, encodeBlockNumber(number)...), headerHashSuffix...)
@@ -209,11 +203,6 @@ func blockBodyKey(number uint64, hash common.Hash) []byte {
 // blockReceiptsKey = blockReceiptsPrefix + num (uint64 big endian) + hash
 func blockReceiptsKey(number uint64, hash common.Hash) []byte {
 	return append(append(blockReceiptsPrefix, encodeBlockNumber(number)...), hash.Bytes()...)
-}
-
-// blockBlobSidecarsKey = BlockBlobSidecarsPrefix + blockNumber (uint64 big endian) + blockHash
-func blockBlobSidecarsKey(number uint64, hash common.Hash) []byte {
-	return append(append(BlockBlobSidecarsPrefix, encodeBlockNumber(number)...), hash.Bytes()...)
 }
 
 // txLookupKey = txLookupPrefix + hash
@@ -238,6 +227,11 @@ func storageSnapshotKey(accountHash, storageHash common.Hash) []byte {
 // storageSnapshotsKey = SnapshotStoragePrefix + account hash + storage hash
 func storageSnapshotsKey(accountHash common.Hash) []byte {
 	return append(SnapshotStoragePrefix, accountHash.Bytes()...)
+}
+
+// skeletonHeaderKey = skeletonHeaderPrefix + num (uint64 big endian)
+func skeletonHeaderKey(number uint64) []byte {
+	return append(skeletonHeaderPrefix, encodeBlockNumber(number)...)
 }
 
 // preimageKey = PreimagePrefix + hash
