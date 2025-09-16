@@ -35,6 +35,7 @@ type StateDB interface {
 	SubBalance(common.Address, *uint256.Int, tracing.BalanceChangeReason) uint256.Int
 	AddBalance(common.Address, *uint256.Int, tracing.BalanceChangeReason) uint256.Int
 	GetBalance(common.Address) *uint256.Int
+	SetBalance(addr common.Address, amount *uint256.Int, reason tracing.BalanceChangeReason)
 
 	GetNonce(common.Address) uint64
 	SetNonce(common.Address, uint64, tracing.NonceChangeReason)
@@ -83,16 +84,22 @@ type StateDB interface {
 	// AddSlotToAccessList adds the given (address,slot) to the access list. This operation is safe to perform
 	// even if the feature/fork is not active yet
 	AddSlotToAccessList(addr common.Address, slot common.Hash)
+	ClearAccessList()
 
 	// PointCache returns the point cache used in computations
 	PointCache() *utils.PointCache
 
 	Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList)
+	SetTxContext(thash common.Hash, ti int)
+	TxIndex() int
 
 	RevertToSnapshot(int)
 	Snapshot() int
 
+	NoTries() bool
+
 	AddLog(*types.Log)
+	GetLogs(hash common.Hash, blockNumber uint64, blockHash common.Hash, blockTime uint64) []*types.Log
 	AddPreimage(common.Hash, []byte)
 
 	Witness() *stateless.Witness
@@ -101,4 +108,7 @@ type StateDB interface {
 
 	// Finalise must be invoked at the end of a transaction
 	Finalise(bool)
+	IntermediateRoot(deleteEmptyObjects bool) common.Hash
+
+	IsAddressInMutations(addr common.Address) bool
 }
