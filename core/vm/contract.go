@@ -18,19 +18,8 @@ package vm
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/core/tracing"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/holiman/uint256"
-)
-
-const codeBitmapCacheSize = 2000
-
-var (
-	codeBitmapCache = lru.NewCache[common.Hash, bitvec](codeBitmapCacheSize)
-
-	contractCodeBitmapHitMeter  = metrics.NewRegisteredMeter("vm/contract/code/bitmap/hit", nil)
-	contractCodeBitmapMissMeter = metrics.NewRegisteredMeter("vm/contract/code/bitmap/miss", nil)
 )
 
 // Contract represents an ethereum contract in the state database. It contains
@@ -55,6 +44,21 @@ type Contract struct {
 
 	Gas   uint64
 	value *uint256.Int
+}
+
+// NewContract returns a new contract environment for the execution of EVM.
+func NewContract(caller common.Address, address common.Address, value *uint256.Int, gas uint64, jumpDests map[common.Hash]bitvec) *Contract {
+	// Initialize the jump analysis map if it's nil, mostly for tests
+	if jumpDests == nil {
+		jumpDests = make(map[common.Hash]bitvec)
+	}
+	return &Contract{
+		caller:    caller,
+		address:   address,
+		jumpdests: jumpDests,
+		Gas:       gas,
+		value:     value,
+	}
 }
 
 func (c *Contract) validJumpdest(dest *uint256.Int) bool {
@@ -85,17 +89,10 @@ func (c *Contract) isCode(udest uint64) bool {
 		// Does parent context have the analysis?
 		analysis, exist := c.jumpdests[c.CodeHash]
 		if !exist {
-			if cached, ok := codeBitmapCache.Get(c.CodeHash); ok {
-				contractCodeBitmapHitMeter.Mark(1)
-				analysis = cached
-			} else {
-				// Do the analysis and save in parent context
-				// We do not need to store it in c.analysis
-				analysis = codeBitmap(c.Code)
-				c.jumpdests[c.CodeHash] = analysis
-				contractCodeBitmapMissMeter.Mark(1)
-				codeBitmapCache.Add(c.CodeHash, analysis)
-			}
+			// Do the analysis and save in parent context
+			// We do not need to store it in c.analysis
+			analysis = codeBitmap(c.Code)
+			c.jumpdests[c.CodeHash] = analysis
 		}
 		// Also stash it in current contract for faster access
 		c.analysis = analysis
