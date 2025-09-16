@@ -676,11 +676,7 @@ func (w *worker) makeEnv(parent *types.Header, header *types.Header, coinbase co
 		}
 		state.StartPrefetcher("miner", bundle, nil)
 	} else {
-		if prevEnv == nil {
-			state.StartPrefetcher("miner", nil, nil)
-		} else {
-			state.TransferPrefetcher(prevEnv.state)
-		}
+		state.StartPrefetcher("miner", nil, nil)
 	}
 
 	// Note the passed coinbase may be different with header.Coinbase.

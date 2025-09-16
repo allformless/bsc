@@ -79,11 +79,10 @@ func (m *mutation) isDelete() bool {
 // must be created with new root and updated database for accessing post-
 // commit states.
 type StateDB struct {
-	db             Database
-	prefetcherLock sync.Mutex
-	prefetcher     *triePrefetcher
-	reader         Reader
-	trie           Trie // it's resolved on first access
+	db         Database
+	prefetcher *triePrefetcher
+	reader     Reader
+	trie       Trie // it's resolved on first access
 
 	// originalRoot is the pre-state root, before any changes were made.
 	// It will be updated when the Commit is called.
@@ -212,25 +211,6 @@ func (s *StateDB) SetNeedBadSharedStorage(needBadSharedStorage bool) {
 	s.needBadSharedStorage = needBadSharedStorage
 }
 
-// In mining mode, we will try multi-fillTransactions to get the most profitable one.
-// StateDB will be created for each fillTransactions with same block height.
-// Share a single triePrefetcher to avoid too much prefetch routines.
-func (s *StateDB) TransferPrefetcher(prev *StateDB) {
-	if prev == nil {
-		return
-	}
-	var fetcher *triePrefetcher
-
-	prev.prefetcherLock.Lock()
-	fetcher = prev.prefetcher
-	prev.prefetcher = nil
-	prev.prefetcherLock.Unlock()
-
-	s.prefetcherLock.Lock()
-	s.prefetcher = fetcher
-	s.prefetcherLock.Unlock()
-}
-
 // StartPrefetcher initializes a new trie prefetcher to pull in nodes from the
 // state trie concurrently while the state is mutated so that when we reach the
 // commit phase, most of the needed data is already hot.
@@ -267,13 +247,11 @@ func (s *StateDB) StopPrefetcher() {
 	if s.db.NoTries() {
 		return
 	}
-	s.prefetcherLock.Lock()
 	if s.prefetcher != nil {
 		s.prefetcher.terminate(false)
 		s.prefetcher.report()
 		s.prefetcher = nil
 	}
-	s.prefetcherLock.Unlock()
 }
 
 // Mark that the block is processed by diff layer
@@ -795,17 +773,6 @@ func (s *StateDB) StateForPrefetch() *StateDB {
 	return state
 }
 
-// Copy creates a deep, independent copy of the state.
-// Snapshots of the copied state cannot be applied to the copy.
-func (s *StateDB) Copy() *StateDB {
-	return s.copyInternal(false)
-}
-
-// It is mainly for state prefetcher to do trie prefetch right now.
-func (s *StateDB) CopyDoPrefetch() *StateDB {
-	return s.copyInternal(true)
-}
-
 func (s *StateDB) TransferBlockAccessList(prev *StateDB) {
 	if prev == nil {
 		return
@@ -814,20 +781,20 @@ func (s *StateDB) TransferBlockAccessList(prev *StateDB) {
 	prev.blockAccessList = nil
 }
 
-// If doPrefetch is true, it tries to reuse the prefetcher, the copied StateDB will do active trie prefetch.
-// otherwise, just do inactive copy trie prefetcher.
-func (s *StateDB) copyInternal(doPrefetch bool) *StateDB {
+// Copy creates a deep, independent copy of the state.
+// Snapshots of the copied state cannot be applied to the copy.
+func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
-		db:     s.db,
-		reader: s.reader,
-		// expectedRoot: s.expectedRoot,
+		db:                   s.db,
+		reader:               s.reader,
 		originalRoot:         s.originalRoot,
+		expectedRoot:         s.expectedRoot,
+		needBadSharedStorage: s.needBadSharedStorage,
 		stateObjects:         make(map[common.Address]*stateObject, len(s.stateObjects)),
 		stateObjectsDestruct: make(map[common.Address]*stateObject, len(s.stateObjectsDestruct)),
 		mutations:            make(map[common.Address]*mutation, len(s.mutations)),
 		dbErr:                s.dbErr,
-		needBadSharedStorage: s.needBadSharedStorage,
 		refund:               s.refund,
 		thash:                s.thash,
 		txIndex:              s.txIndex,
@@ -876,7 +843,6 @@ func (s *StateDB) copyInternal(doPrefetch bool) *StateDB {
 		}
 		state.logs[hash] = cpy
 	}
-
 	return state
 }
 
@@ -962,8 +928,11 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// If there was a trie prefetcher operating, terminate it async so that the
 	// individual storage tries can be updated as soon as the disk load finishes.
 	if s.prefetcher != nil {
-		// s.prefetcher.terminate(true)
-		defer s.StopPrefetcher() // not async now!
+		s.prefetcher.terminate(true)
+		defer func() {
+			s.prefetcher.report()
+			s.prefetcher = nil // Pre-byzantium, unset any used up prefetcher
+		}()
 	}
 	// Process all storage updates concurrently. The state object update root
 	// method will internally call a blocking trie fetch from the prefetcher,
@@ -1330,7 +1299,6 @@ func (s *StateDB) GetTrie() Trie {
 func (s *StateDB) commit(deleteEmptyObjects bool, noStorageWiping bool, blockNumber uint64) (*stateUpdate, error) {
 	// Short circuit in case any database failure occurred earlier.
 	if s.dbErr != nil {
-		s.StopPrefetcher()
 		return nil, fmt.Errorf("commit aborted due to earlier error: %v", s.dbErr)
 	}
 	// Finalize any pending changes and merge everything into the tries
