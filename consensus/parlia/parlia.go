@@ -84,6 +84,8 @@ const (
 
 	// `finalityRewardInterval` should be smaller than `inMemorySnapshots`, otherwise, it will result in excessive computation.
 	finalityRewardInterval = 200
+
+	kAncestorGenerationDepth = 3
 )
 
 var (
@@ -480,9 +482,20 @@ func (p *Parlia) verifyVoteAttestation(chain consensus.ChainHeaderReader, header
 	// The target block should be direct parent.
 	targetNumber := attestation.Data.TargetNumber
 	targetHash := attestation.Data.TargetHash
-	if targetNumber != parent.Number.Uint64() || targetHash != parent.Hash() {
-		return fmt.Errorf("invalid attestation, target mismatch, expected block: %d, hash: %s; real block: %d, hash: %s",
-			parent.Number.Uint64(), parent.Hash(), targetNumber, targetHash)
+	match := false
+	ancestor := parent
+	for range p.getAncestorGenerationDepth(header) {
+		if targetNumber == ancestor.Number.Uint64() && targetHash == ancestor.Hash() {
+			match = true
+			break
+		}
+		ancestor, err = p.getParent(chain, header, parents)
+		if err != nil {
+			return err
+		}
+	}
+	if !match {
+		return fmt.Errorf("invalid attestation, target mismatch, real block: %d, hash: %s", targetNumber, targetHash)
 	}
 
 	// The source block should be the highest justified block.
@@ -1031,23 +1044,43 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 		return nil
 	}
 
-	// Fetch direct parent's votes
-	parent := chain.GetHeaderByHash(header.ParentHash)
-	if parent == nil {
-		return errors.New("parent not found")
+	var (
+		votes           []*types.VoteEnvelope
+		targetHash      = header.ParentHash
+		targetHeader    *types.Header
+		targetBasedSnap *Snapshot
+	)
+
+	for range p.getAncestorGenerationDepth(header) {
+		ancestor := chain.GetHeaderByHash(targetHash)
+		if ancestor == nil {
+			return errors.New("parent not found")
+		}
+
+		snap, err := p.snapshot(chain, ancestor.Number.Uint64()-1, ancestor.ParentHash, nil)
+		if err != nil {
+			return err
+		}
+
+		votes = p.VotePool.FetchVoteByBlockHash(ancestor.Hash())
+		quorum := cmath.CeilDiv(len(targetBasedSnap.Validators)*2, 3)
+		if len(votes) >= quorum {
+			targetHeader = ancestor
+			targetBasedSnap = snap
+			break
+		}
+
+		// move up one generation
+		targetHash = ancestor.ParentHash
 	}
-	snap, err := p.snapshot(chain, parent.Number.Uint64()-1, parent.ParentHash, nil)
-	if err != nil {
-		return err
-	}
-	votes := p.VotePool.FetchVoteByBlockHash(parent.Hash())
-	if len(votes) < cmath.CeilDiv(len(snap.Validators)*2, 3) {
+
+	if targetHeader == nil {
 		return nil
 	}
 
 	// Prepare vote attestation
 	// Prepare vote data
-	justifiedBlockNumber, justifiedBlockHash, err := p.GetJustifiedNumberAndHash(chain, []*types.Header{parent})
+	justifiedBlockNumber, justifiedBlockHash, err := p.GetJustifiedNumberAndHash(chain, []*types.Header{targetHeader})
 	if err != nil {
 		return errors.New("unexpected error when getting the highest justified number and hash")
 	}
@@ -1055,8 +1088,8 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 		Data: &types.VoteData{
 			SourceNumber: justifiedBlockNumber,
 			SourceHash:   justifiedBlockHash,
-			TargetNumber: parent.Number.Uint64(),
-			TargetHash:   parent.Hash(),
+			TargetNumber: targetHeader.Number.Uint64(),
+			TargetHash:   targetHeader.Hash(),
 		},
 	}
 	// Check vote data from votes
@@ -1078,7 +1111,7 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 	}
 	copy(attestation.AggSignature[:], bls.AggregateSignatures(sigs).Marshal())
 	// Prepare vote address bitset.
-	for _, valInfo := range snap.Validators {
+	for _, valInfo := range targetBasedSnap.Validators {
 		if _, ok := voteAddrSet[valInfo.VoteAddress]; ok {
 			attestation.VoteAddressSet |= 1 << (valInfo.Index - 1) // Index is offset by 1
 		}
@@ -1659,7 +1692,7 @@ func (p *Parlia) Delay(chain consensus.ChainReader, header *types.Header, leftOv
 	// The blocking time should be no more than half of period when snap.TurnLength == 1
 	timeForMining := time.Duration(snap.BlockInterval) * time.Millisecond / 2
 	if !snap.lastBlockInOneTurn(header.Number.Uint64()) {
-		timeForMining = time.Duration(snap.BlockInterval) * time.Millisecond * 4 / 5
+		timeForMining = time.Duration(snap.BlockInterval) * time.Millisecond
 	}
 	if delay > timeForMining {
 		delay = timeForMining
@@ -2322,6 +2355,50 @@ func (p *Parlia) BlockInterval(chain consensus.ChainHeaderReader, header *types.
 	return snap.BlockInterval, nil
 }
 
+// VoteTarget determines which block a validator should vote for.
+// Returns nil if no vote is needed. (Refer BEP-590)
+func (p *Parlia) VoteTarget(chain consensus.ChainHeaderReader, curHead *types.Header) (*types.Header, error) {
+	availableDepth := p.getAncestorGenerationDepth(curHead)
+
+	latestJustified, _, err := p.GetJustifiedNumberAndHash(chain, []*types.Header{curHead})
+	if err != nil {
+		return nil, err
+	}
+
+	curNum := curHead.Number.Uint64()
+	// If the current block is beyond the available depth, vote for the current head
+	if latestJustified+availableDepth < curNum {
+		return curHead, nil
+	}
+
+	parent := chain.GetHeaderByHash(curHead.ParentHash)
+	if parent == nil {
+		return nil, errUnknownBlock
+	}
+	parentJustified, _, err := p.GetJustifiedNumberAndHash(chain, []*types.Header{parent})
+	if err != nil {
+		return nil, err
+	}
+
+	// If the parent's justified number equals the current, no vote is needed
+	if parentJustified == latestJustified {
+		return nil, nil
+	}
+
+	var latestFinalized uint64
+	if finalizedHeader := p.GetFinalizedHeader(chain, curHead); finalizedHeader != nil {
+		latestFinalized = finalizedHeader.Number.Uint64()
+	}
+	// Vote for justified+1 if conditions are met
+	if parentJustified+availableDepth >= latestJustified && latestFinalized+1 != latestJustified {
+		if target := chain.GetHeaderByNumber(latestJustified + 1); target != nil {
+			return target, nil
+		}
+	}
+
+	return curHead, nil
+}
+
 func (p *Parlia) NextProposalBlock(chain consensus.ChainHeaderReader, header *types.Header, proposer common.Address) (uint64, uint64, error) {
 	snap, err := p.snapshot(chain, header.Number.Uint64(), header.Hash(), nil)
 	if err != nil {
@@ -2366,6 +2443,15 @@ func (p *Parlia) detectNewVersionWithFork(chain consensus.ChainHeaderReader, hea
 		}
 		logFn("possible fork detected: client is not in majority", "nextForkHash", forkHashHex)
 	}
+}
+
+// TODO(Nathan): use kAncestorGenerationDepth directly instead of this func once Fermi hardfork passed
+func (p *Parlia) getAncestorGenerationDepth(header *types.Header) uint64 {
+	if p.chainConfig.IsFermi(header.Number, header.Time) {
+		return kAncestorGenerationDepth
+	}
+
+	return 1
 }
 
 // chain context
