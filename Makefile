@@ -5,7 +5,7 @@
 .PHONY: geth evm faucet all test truffle-test lint fmt clean devtools help
 .PHONY: docker
 
-GOBIN = ./build/bin
+GOBIN = ./build/bin 
 GO ?= latest
 GORUN = go run
 GIT_COMMIT=$(shell git rev-parse HEAD)
