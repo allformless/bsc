@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -125,7 +124,7 @@ type layer interface {
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
 	// flattening everything down (bad for reorgs).
-	journal(w io.Writer, journalType JournalType) error
+	journal(w io.Writer) error
 }
 
 // Config contains the settings for database.
@@ -136,6 +135,7 @@ type Config struct {
 	StateCleanSize      int    // Maximum memory allowance (in bytes) for caching clean state data
 	WriteBufferSize     int    // Maximum memory allowance (in bytes) for write buffer
 	ReadOnly            bool   // Flag whether the database is opened in read only mode
+	JournalDirectory    string // Absolute path of journal directory (null means the journal data is persisted in key-value store)
 
 	// Testing configurations
 	SnapshotNoBuild   bool // Flag Whether the state generation is allowed
@@ -181,6 +181,9 @@ func (c *Config) fields() []interface{} {
 		list = append(list, "history", "entire chain")
 	} else {
 		list = append(list, "history", fmt.Sprintf("last %d blocks", c.StateHistory))
+	}
+	if c.JournalDirectory != "" {
+		list = append(list, "journal-dir", c.JournalDirectory)
 	}
 	return list
 }
@@ -240,13 +243,16 @@ type Database struct {
 	isVerkle bool       // Flag if database is used for verkle tree
 	hasher   nodeHasher // Trie node hasher
 
-	config  *Config                      // Configuration for database
-	diskdb  ethdb.Database               // Persistent storage for matured trie nodes
-	tree    *layerTree                   // The group for all known layers
-	freezer ethdb.ResettableAncientStore // Freezer for storing trie histories, nil possible in tests
-	lock    sync.RWMutex                 // Lock to prevent mutations from happening at the same time
-	indexer *historyIndexer              // History indexer
-	incr    *incrManager                 // used to store incremental data: block, state and contract codes
+	config *Config        // Configuration for database
+	diskdb ethdb.Database // Persistent storage for matured trie nodes
+	tree   *layerTree     // The group for all known layers
+
+	stateFreezer ethdb.ResettableAncientStore // Freezer for storing state histories, nil possible in tests
+	stateIndexer *historyIndexer              // History indexer historical state data, nil possible
+
+	lock sync.RWMutex // Lock to prevent mutations from happening at the same time
+
+	incr *incrManager // used to store incremental data: block, state and contract codes
 }
 
 // New attempts to load an already existing layer from a persistent key-value
@@ -309,8 +315,8 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 		}
 	}
 	// TODO (rjl493456442) disable the background indexing in read-only mode
-	if db.freezer != nil && db.config.EnableStateIndexing {
-		db.indexer = newHistoryIndexer(db.diskdb, db.freezer, db.tree.bottom().stateID())
+	if db.stateFreezer != nil && db.config.EnableStateIndexing {
+		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
 		log.Info("Enabled state history indexing")
 	}
 	fields := config.fields()
@@ -345,25 +351,26 @@ func (db *Database) repairHistory() error {
 	if err != nil {
 		log.Crit("Failed to open state history freezer", "err", err)
 	}
-	db.freezer = freezer
+	db.stateFreezer = freezer
 
 	// Reset the entire state histories if the trie database is not initialized
 	// yet. This action is necessary because these state histories are not
 	// expected to exist without an initialized trie database.
 	id := db.tree.bottom().stateID()
 	if id == 0 {
-		frozen, err := db.freezer.Ancients()
+		frozen, err := db.stateFreezer.Ancients()
 		if err != nil {
 			log.Crit("Failed to retrieve head of state history", "err", err)
 		}
 		if frozen != 0 {
-			// TODO(rjl493456442) would be better to group them into a batch.
-			//
 			// Purge all state history indexing data first
-			rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
-			rawdb.DeleteStateHistoryIndex(db.diskdb)
-			err := db.freezer.Reset()
-			if err != nil {
+			batch := db.diskdb.NewBatch()
+			rawdb.DeleteStateHistoryIndexMetadata(batch)
+			rawdb.DeleteStateHistoryIndex(batch)
+			if err := batch.Write(); err != nil {
+				log.Crit("Failed to purge state history index", "err", err)
+			}
+			if err := db.stateFreezer.Reset(); err != nil {
 				log.Crit("Failed to reset state histories", "err", err)
 			}
 			log.Info("Truncated extraneous state history")
@@ -372,7 +379,7 @@ func (db *Database) repairHistory() error {
 	}
 	// Truncate the extra state histories above in freezer in case it's not
 	// aligned with the disk layer. It might happen after a unclean shutdown.
-	pruned, err := truncateFromHead(db.diskdb, db.freezer, id)
+	pruned, err := truncateFromHead(db.stateFreezer, id)
 	if err != nil {
 		log.Crit("Failed to truncate extra state histories", "err", err)
 	}
@@ -515,7 +522,7 @@ func (db *Database) GetStartBlock() (uint64, error) {
 		// force kill case, use the block next to the disk layer block
 		disk := db.tree.bottom()
 		var m meta
-		blob := rawdb.ReadStateHistoryMeta(db.freezer, disk.id)
+		blob := rawdb.ReadStateHistoryMeta(db.stateFreezer, disk.id)
 		if err := m.decode(blob); err != nil {
 			log.Error("Failed to decode state histories", "err", err)
 			return 0, err
@@ -625,7 +632,6 @@ func (db *Database) Enable(root common.Hash) error {
 	// Drop the stale state journal in persistent database and
 	// reset the persistent state id back to zero.
 	batch := db.diskdb.NewBatch()
-	db.DeleteTrieJournal(batch)
 	rawdb.DeleteSnapshotRoot(batch)
 	rawdb.WritePersistentStateID(batch, 0)
 	if err := batch.Write(); err != nil {
@@ -635,13 +641,15 @@ func (db *Database) Enable(root common.Hash) error {
 	// all root->id mappings should be removed as well. Since
 	// mappings can be huge and might take a while to clear
 	// them, just leave them in disk and wait for overwriting.
-	if db.freezer != nil {
-		// TODO(rjl493456442) would be better to group them into a batch.
-		//
+	if db.stateFreezer != nil {
 		// Purge all state history indexing data first
-		rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
-		rawdb.DeleteStateHistoryIndex(db.diskdb)
-		if err := db.freezer.Reset(); err != nil {
+		batch.Reset()
+		rawdb.DeleteStateHistoryIndexMetadata(batch)
+		rawdb.DeleteStateHistoryIndex(batch)
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		if err := db.stateFreezer.Reset(); err != nil {
 			return err
 		}
 	}
@@ -657,9 +665,9 @@ func (db *Database) Enable(root common.Hash) error {
 	// To ensure the history indexer always matches the current state, we must:
 	//   1. Close any existing indexer
 	//   2. Re-initialize the indexer so it starts indexing from the new state root.
-	if db.indexer != nil && db.freezer != nil && db.config.EnableStateIndexing {
-		db.indexer.close()
-		db.indexer = newHistoryIndexer(db.diskdb, db.freezer, db.tree.bottom().stateID())
+	if db.stateIndexer != nil && db.stateFreezer != nil && db.config.EnableStateIndexing {
+		db.stateIndexer.close()
+		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
 		log.Info("Re-enabled state history indexing")
 	}
 	log.Info("Rebuilt trie database", "root", root)
@@ -679,7 +687,7 @@ func (db *Database) Recover(root common.Hash) error {
 	if err := db.modifyAllowed(); err != nil {
 		return err
 	}
-	if db.freezer == nil {
+	if db.stateFreezer == nil {
 		return errors.New("state rollback is non-supported")
 	}
 	// Short circuit if the target state is not recoverable
@@ -692,7 +700,7 @@ func (db *Database) Recover(root common.Hash) error {
 		dl    = db.tree.bottom()
 	)
 	for dl.rootHash() != root {
-		h, err := readHistory(db.freezer, dl.stateID())
+		h, err := readStateHistory(db.stateFreezer, dl.stateID())
 		if err != nil {
 			return err
 		}
@@ -705,8 +713,6 @@ func (db *Database) Recover(root common.Hash) error {
 		// disk layer won't be accessible from outside.
 		db.tree.init(dl)
 	}
-	db.DeleteTrieJournal(db.diskdb)
-
 	// Explicitly sync the key-value store to ensure all recent writes are
 	// flushed to disk. This step is crucial to prevent a scenario where
 	// recent key-value writes are lost due to an application panic, while
@@ -715,7 +721,7 @@ func (db *Database) Recover(root common.Hash) error {
 	if err := db.diskdb.SyncKeyValue(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.diskdb, db.freezer, dl.stateID())
+	_, err := truncateFromHead(db.stateFreezer, dl.stateID())
 	if err != nil {
 		return err
 	}
@@ -740,15 +746,15 @@ func (db *Database) Recoverable(root common.Hash) bool {
 		return false
 	}
 	// This is a temporary workaround for the unavailability of the freezer in
-	// dev mode. As a consequence, the Pathdb loses the ability for deep reorg
+	// dev mode. As a consequence, the database loses the ability for deep reorg
 	// in certain cases.
 	// TODO(rjl493456442): Implement the in-memory ancient store.
-	if db.freezer == nil {
+	if db.stateFreezer == nil {
 		return false
 	}
 	// Ensure the requested state is a canonical state and all state
-	// histories in range [id+1, disklayer.ID] are present and complete.
-	return checkHistories(db.freezer, *id+1, dl.stateID()-*id, func(m *meta) error {
+	// histories in range [id+1, dl.ID] are present and complete.
+	return checkStateHistories(db.stateFreezer, *id+1, dl.stateID()-*id, func(m *meta) error {
 		if m.parent != root {
 			return errors.New("unexpected state history")
 		}
@@ -776,11 +782,11 @@ func (db *Database) Close() error {
 	dl.resetCache() // release the memory held by clean cache
 
 	// Terminate the background state history indexer
-	if db.indexer != nil {
-		db.indexer.close()
+	if db.stateIndexer != nil {
+		db.stateIndexer.close()
 	}
 	// Close the attached state history freezer.
-	if db.freezer == nil {
+	if db.stateFreezer == nil {
 		return nil
 	}
 
@@ -800,7 +806,7 @@ func (db *Database) Close() error {
 		}
 	}
 
-	return db.freezer.Close()
+	return db.stateFreezer.Close()
 }
 
 // Size returns the current storage size of the memory cache in front of the
@@ -862,42 +868,18 @@ func (db *Database) GetAllRooHash() [][]string {
 	return data
 }
 
-// DetermineJournalTypeForWriter is used when persisting the journal. It determines JournalType based on the config passed in by the Config.
-func (db *Database) DetermineJournalTypeForWriter() JournalType {
-	if db.config.JournalFile {
-		return JournalFileType
+// journalPath returns the absolute path of journal for persisting state data.
+func (db *Database) journalPath() string {
+	if db.config.JournalDirectory == "" {
+		return ""
+	}
+	var fname string
+	if db.isVerkle {
+		fname = fmt.Sprintf("verkle.journal")
 	} else {
-		return JournalKVType
+		fname = fmt.Sprintf("merkle.journal")
 	}
-}
-
-// DetermineJournalTypeForReader is used when loading the journal. It loads based on whether JournalKV or JournalFile currently exists.
-func (db *Database) DetermineJournalTypeForReader() JournalType {
-	if journal := rawdb.ReadTrieJournal(db.diskdb); len(journal) != 0 {
-		return JournalKVType
-	}
-
-	if fileInfo, stateErr := os.Stat(db.config.JournalFilePath); stateErr == nil && !fileInfo.IsDir() {
-		return JournalFileType
-	}
-
-	return JournalKVType
-}
-
-func (db *Database) DeleteTrieJournal(writer ethdb.KeyValueWriter) error {
-	// To prevent any remnants of old journals after converting from JournalKV to JournalFile or vice versa, all deletions must be completed.
-	rawdb.DeleteTrieJournal(writer)
-
-	// delete from journal file, may not exist
-	filePath := db.config.JournalFilePath
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return nil
-	}
-	errRemove := os.Remove(filePath)
-	if errRemove != nil {
-		log.Crit("Failed to remove tries journal", "journal path", filePath, "err", errRemove)
-	}
-	return nil
+	return filepath.Join(db.config.JournalDirectory, fname)
 }
 
 // AccountHistory inspects the account history within the specified range.
@@ -908,7 +890,7 @@ func (db *Database) DeleteTrieJournal(writer ethdb.KeyValueWriter) error {
 // End: State ID of the last history for the query. 0 implies the last available
 // object is selected as the ending point. Note end is included in the query.
 func (db *Database) AccountHistory(address common.Address, start, end uint64) (*HistoryStats, error) {
-	return accountHistory(db.freezer, address, start, end)
+	return accountHistory(db.stateFreezer, address, start, end)
 }
 
 // StorageHistory inspects the storage history within the specified range.
@@ -921,22 +903,22 @@ func (db *Database) AccountHistory(address common.Address, start, end uint64) (*
 //
 // Note, slot refers to the hash of the raw slot key.
 func (db *Database) StorageHistory(address common.Address, slot common.Hash, start uint64, end uint64) (*HistoryStats, error) {
-	return storageHistory(db.freezer, address, slot, start, end)
+	return storageHistory(db.stateFreezer, address, slot, start, end)
 }
 
 // HistoryRange returns the block numbers associated with earliest and latest
 // state history in the local store.
 func (db *Database) HistoryRange() (uint64, uint64, error) {
-	return historyRange(db.freezer)
+	return historyRange(db.stateFreezer)
 }
 
 // IndexProgress returns the indexing progress made so far. It provides the
 // number of states that remain unindexed.
 func (db *Database) IndexProgress() (uint64, error) {
-	if db.indexer == nil {
+	if db.stateIndexer == nil {
 		return 0, nil
 	}
-	return db.indexer.progress()
+	return db.stateIndexer.progress()
 }
 
 // AccountIterator creates a new account iterator for the specified root hash and
@@ -992,14 +974,14 @@ func (db *Database) MergeIncrState(incrDir string) error {
 		log.Error("Failed to read incremental chain freezer", "error", err)
 		return err
 	}
-	if err = rawdb.ResetStateTableToNewStartPoint(db.freezer, incrStateMeta.StateIDArray[1]); err != nil {
+	if err = rawdb.ResetStateTableToNewStartPoint(db.stateFreezer, incrStateMeta.StateIDArray[1]); err != nil {
 		log.Error("Failed to reset state freezer with new start point", "error", err,
 			"lastStateID", incrStateMeta.StateIDArray[1])
 		return err
 	}
 
 	dl := db.tree.bottom()
-	err = dl.mergeIncrNodesWithStates(db.diskdb, db.freezer, incrStateFreezer, tail+1, incrAncients)
+	err = dl.mergeIncrNodesWithStates(db.diskdb, db.stateFreezer, incrStateFreezer, tail+1, incrAncients)
 	if err != nil {
 		log.Error("Failed to merge incremental trie nodes", "error", err)
 		return err
@@ -1135,7 +1117,7 @@ func (db *Database) alignIncrData(diskLayerID uint64) error {
 			return nil
 		}
 		if diskLayerID > recordFirstStateID {
-			h, err := readHistory(db.freezer, recordFirstStateID)
+			h, err := readStateHistory(db.stateFreezer, recordFirstStateID)
 			if err != nil {
 				return err
 			}
@@ -1180,7 +1162,7 @@ func (db *Database) alignIncrData(diskLayerID uint64) error {
 	if info.chainAncients-1 != info.lastStateBlock {
 		log.Info("Force kill with data")
 		if diskLayerID > info.lastStateID {
-			h, err := readHistory(db.freezer, info.lastStateID)
+			h, err := readStateHistory(db.stateFreezer, info.lastStateID)
 			if err != nil {
 				return err
 			}
@@ -1262,7 +1244,7 @@ func (db *Database) truncateIncrStateFreezer(info *incrInfo, finalStateID uint64
 		}
 	}
 
-	pruned, err := truncateFromHead(db.diskdb, info.stateFreezer, truncatePos)
+	pruned, err := truncateFromHead(info.stateFreezer, truncatePos)
 	if err != nil {
 		log.Error("Failed to truncate incr state histories", "error", err)
 		return err

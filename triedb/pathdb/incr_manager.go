@@ -600,7 +600,7 @@ func (im *incrManager) ForceFlushStateBuffer() error {
 
 // truncateStateFreezer truncate state history by flushed stateID.
 func (im *incrManager) truncateStateFreezer(stateID uint64) error {
-	tail, err := im.db.freezer.Tail()
+	tail, err := im.db.stateFreezer.Tail()
 	if err != nil {
 		return nil
 	}
@@ -610,7 +610,7 @@ func (im *incrManager) truncateStateFreezer(stateID uint64) error {
 		return nil
 	}
 
-	pruned, err := truncateFromTail(im.db.diskdb, im.db.freezer, stateID-limit)
+	pruned, err := truncateFromTail(im.db.stateFreezer, stateID-limit)
 	if err != nil {
 		log.Error("Failed to truncate from tail", "error", err, "target", stateID)
 		return err

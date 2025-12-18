@@ -97,6 +97,9 @@ type EVM struct {
 	// StateDB gives access to the underlying state
 	StateDB StateDB
 
+	// table holds the opcode specific handlers
+	table *JumpTable
+
 	// depth is the current call stack
 	depth int
 
@@ -109,10 +112,6 @@ type EVM struct {
 	// virtual machine configuration options used to initialise the evm
 	Config Config
 
-	// global (to this context) ethereum virtual machine used throughout
-	// the execution of the tx
-	interpreter *EVMInterpreter
-
 	// abort is used to abort the EVM calling operations
 	abort atomic.Bool
 
@@ -124,9 +123,12 @@ type EVM struct {
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
-	// jumpDests is the aggregated result of JUMPDEST analysis made through
-	jumpDests map[common.Hash]bitvec
+	// jumpDests stores results of JUMPDEST analysis.
+	jumpDests JumpDestCache
 
+	// global (to this context) ethereum virtual machine used throughout
+	// the execution of the tx
+	interpreter *EVMInterpreter
 	// the life cycle of EVM.
 	optInterpreter  *EVMInterpreter
 	baseInterpreter *EVMInterpreter
@@ -143,7 +145,7 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 		Config:      config,
 		chainConfig: chainConfig,
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
-		jumpDests:   make(map[common.Hash]bitvec),
+		jumpDests:   newMapJumpDests(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
@@ -182,6 +184,11 @@ func (evm *EVM) SetPrecompiles(precompiles PrecompiledContracts) {
 	evm.precompiles = precompiles
 }
 
+// SetJumpDestCache configures the analysis cache.
+func (evm *EVM) SetJumpDestCache(jumpDests JumpDestCache) {
+	evm.jumpDests = jumpDests
+}
+
 // SetTxContext resets the EVM with a new transaction context.
 // This is not threadsafe and should only be done very cautiously.
 func (evm *EVM) SetTxContext(txCtx TxContext) {
@@ -200,11 +207,6 @@ func (evm *EVM) Cancel() {
 // Cancelled returns true if Cancel has been called
 func (evm *EVM) Cancelled() bool {
 	return evm.abort.Load()
-}
-
-// Interpreter returns the current interpreter
-func (evm *EVM) Interpreter() *EVMInterpreter {
-	return evm.interpreter
 }
 
 func isSystemCall(caller common.Address) bool {

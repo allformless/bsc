@@ -201,6 +201,12 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new ethereum service: %v", err)
 	}
+	// Ensure tx pool starts the background operation
+	txPool := ethservice.TxPool()
+	if err = txPool.Sync(); err != nil {
+		return nil, nil, fmt.Errorf("can't sync transaction pool: %v", err)
+	}
+
 	// Import the test chain.
 	if err := n.Start(); err != nil {
 		return nil, nil, fmt.Errorf("can't start test node: %v", err)

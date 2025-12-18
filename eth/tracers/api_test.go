@@ -542,7 +542,7 @@ func TestTraceTransaction(t *testing.T) {
 		b.AddTx(tx)
 		target = tx.Hash()
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 	api := NewAPI(backend)
 	result, err := api.TraceTransaction(context.Background(), target, nil)
 	if err != nil {
@@ -599,7 +599,7 @@ func TestTraceBlock(t *testing.T) {
 		b.AddTx(tx)
 		txHash = tx.Hash()
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 	api := NewAPI(backend)
 
 	var testSuite = []struct {
@@ -696,7 +696,7 @@ func TestTracingWithOverrides(t *testing.T) {
 			signer, accounts[0].key)
 		b.AddTx(tx)
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 	api := NewAPI(backend)
 	randomAccounts := newAccounts(3)
 	type res struct {
@@ -1120,6 +1120,7 @@ func TestTraceChain(t *testing.T) {
 			nonce += 1
 		}
 	})
+	defer backend.teardown()
 	backend.refHook = func() { ref.Add(1) }
 	backend.relHook = func() { rel.Add(1) }
 	api := NewAPI(backend)
@@ -1227,7 +1228,7 @@ func TestTraceBlockWithBasefee(t *testing.T) {
 		txHash = tx.Hash()
 		baseFee.Set(b.BaseFee())
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 	api := NewAPI(backend)
 
 	var testSuite = []struct {
@@ -1313,7 +1314,7 @@ func TestStandardTraceBlockToFile(t *testing.T) {
 		b.AddTx(tx)
 		txHashs = append(txHashs, tx.Hash())
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 
 	var testSuite = []struct {
 		blockNumber rpc.BlockNumber

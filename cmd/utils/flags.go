@@ -566,7 +566,7 @@ var (
 	}
 	MinerTxGasLimitFlag = &cli.Uint64Flag{
 		Name:     "miner.txgaslimit",
-		Usage:    fmt.Sprintf("Maximum gas allowed per transaction (default = 0, disabled; min = %d)", params.MinTxGasLimitCap),
+		Usage:    fmt.Sprintf("Maximum gas allowed per transaction (default = 0, disabled; min = %d)", params.MaxTxGas),
 		Category: flags.MinerCategory,
 	}
 	// Blob transaction pool settings
@@ -1803,7 +1803,7 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 		cfg.UseLightweightKDF = ctx.Bool(LightKDFFlag.Name)
 	}
 	if ctx.IsSet(NoUSBFlag.Name) || cfg.NoUSB {
-		log.Warn("Option nousb is deprecated and USB is deactivated by default. Use --usb to enable")
+		log.Warn("Option --nousb is deprecated and USB is deactivated by default. Use --usb to enable")
 	}
 	if ctx.IsSet(USBFlag.Name) {
 		cfg.USB = ctx.Bool(USBFlag.Name)
@@ -1836,10 +1836,10 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	}
 	// deprecation notice for log debug flags (TODO: find a more appropriate place to put these?)
 	if ctx.IsSet(LogBacktraceAtFlag.Name) {
-		log.Warn("log.backtrace flag is deprecated")
+		log.Warn("Option --log.backtrace flag is deprecated")
 	}
 	if ctx.IsSet(LogDebugFlag.Name) {
-		log.Warn("log.debug flag is deprecated")
+		log.Warn("Option --log.debug flag is deprecated")
 	}
 }
 
@@ -1997,8 +1997,8 @@ func setMiner(ctx *cli.Context, cfg *minerconfig.Config) {
 	}
 	if ctx.IsSet(MinerTxGasLimitFlag.Name) {
 		limit := ctx.Uint64(MinerTxGasLimitFlag.Name)
-		if limit != 0 && limit < params.MinTxGasLimitCap {
-			Fatalf("Invalid --miner.txgaslimit: %d (must be >= %d or 0)", limit, params.MinTxGasLimitCap)
+		if limit != 0 && limit < params.MaxTxGas {
+			Fatalf("Invalid --miner.txgaslimit: %d (must be >= %d or 0)", limit, params.MaxTxGas)
 		}
 		cfg.TxGasLimit = limit
 	}
@@ -2831,6 +2831,12 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		StateHistory:   ctx.Uint64(StateHistoryFlag.Name),
 		// Disable transaction indexing/unindexing.
 		TxLookupLimit: -1,
+
+		// Enables file journaling for the trie database. The journal files will be stored
+		// within the data directory. The corresponding paths will be either:
+		// - DATADIR/triedb/merkle.journal
+		// - DATADIR/triedb/verkle.journal
+		TrieJournalDirectory: stack.ResolvePath("triedb"),
 	}
 	if options.ArchiveMode && !options.Preimages {
 		options.Preimages = true

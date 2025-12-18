@@ -661,6 +661,11 @@ type ChainConfig struct {
 	OsakaTime      *uint64 `json:"osakaTime,omitempty"`      // Osaka switch time (nil = no fork, 0 = already on osaka)
 	MendelTime     *uint64 `json:"mendelTime,omitempty"`     // Mendel switch time (nil = no fork, 0 = already on mendel)
 	VerkleTime     *uint64 `json:"verkleTime,omitempty"`     // Verkle switch time (nil = no fork, 0 = already on verkle)
+	BPO1Time       *uint64 `json:"bpo1Time,omitempty"`       // BPO1 switch time (nil = no fork, 0 = already on bpo1)
+	BPO2Time       *uint64 `json:"bpo2Time,omitempty"`       // BPO2 switch time (nil = no fork, 0 = already on bpo2)
+	BPO3Time       *uint64 `json:"bpo3Time,omitempty"`       // BPO3 switch time (nil = no fork, 0 = already on bpo3)
+	BPO4Time       *uint64 `json:"bpo4Time,omitempty"`       // BPO4 switch time (nil = no fork, 0 = already on bpo4)
+	BPO5Time       *uint64 `json:"bpo5Time,omitempty"`       // BPO5 switch time (nil = no fork, 0 = already on bpo5)
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -913,6 +918,11 @@ type BlobScheduleConfig struct {
 	Prague *BlobConfig `json:"prague,omitempty"`
 	Osaka  *BlobConfig `json:"osaka,omitempty"`
 	Verkle *BlobConfig `json:"verkle,omitempty"`
+	BPO1   *BlobConfig `json:"bpo1,omitempty"`
+	BPO2   *BlobConfig `json:"bpo2,omitempty"`
+	BPO3   *BlobConfig `json:"bpo3,omitempty"`
+	BPO4   *BlobConfig `json:"bpo4,omitempty"`
+	BPO5   *BlobConfig `json:"bpo5,omitempty"`
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -1330,6 +1340,31 @@ func (c *ChainConfig) IsVerkle(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.VerkleTime, time)
 }
 
+// IsBPO1 returns whether time is either equal to the BPO1 fork time or greater.
+func (c *ChainConfig) IsBPO1(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.BPO1Time, time)
+}
+
+// IsBPO2 returns whether time is either equal to the BPO2 fork time or greater.
+func (c *ChainConfig) IsBPO2(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.BPO2Time, time)
+}
+
+// IsBPO3 returns whether time is either equal to the BPO3 fork time or greater.
+func (c *ChainConfig) IsBPO3(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.BPO3Time, time)
+}
+
+// IsBPO4 returns whether time is either equal to the BPO4 fork time or greater.
+func (c *ChainConfig) IsBPO4(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.BPO4Time, time)
+}
+
+// IsBPO5 returns whether time is either equal to the BPO5 fork time or greater.
+func (c *ChainConfig) IsBPO5(num *big.Int, time uint64) bool {
+	return c.IsLondon(num) && isTimestampForked(c.BPO5Time, time)
+}
+
 // IsVerkleGenesis checks whether the verkle fork is activated at the genesis block.
 //
 // Verkle mode is considered enabled if the verkle fork time is configured,
@@ -1413,6 +1448,11 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "osakaTime", timestamp: c.OsakaTime},
 		{name: "mendelTime", timestamp: c.MendelTime},
 		{name: "verkleTime", timestamp: c.VerkleTime, optional: true},
+		{name: "bpo1", timestamp: c.BPO1Time, optional: true},
+		{name: "bpo2", timestamp: c.BPO2Time, optional: true},
+		{name: "bpo3", timestamp: c.BPO3Time, optional: true},
+		{name: "bpo4", timestamp: c.BPO4Time, optional: true},
+		{name: "bpo5", timestamp: c.BPO5Time, optional: true},
 	} {
 		if lastFork.name != "" {
 			switch {
@@ -1462,6 +1502,11 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "cancun", timestamp: c.CancunTime, config: bsc.Cancun},
 		{name: "prague", timestamp: c.PragueTime, config: bsc.Prague},
 		{name: "osaka", timestamp: c.OsakaTime, config: bsc.Osaka},
+		{name: "bpo1", timestamp: c.BPO1Time, config: bsc.BPO1},
+		{name: "bpo2", timestamp: c.BPO2Time, config: bsc.BPO2},
+		{name: "bpo3", timestamp: c.BPO3Time, config: bsc.BPO3},
+		{name: "bpo4", timestamp: c.BPO4Time, config: bsc.BPO4},
+		{name: "bpo5", timestamp: c.BPO5Time, config: bsc.BPO5},
 	} {
 		if cur.config != nil {
 			if err := cur.config.validate(); err != nil {
@@ -1631,6 +1676,21 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkTimestampIncompatible(c.VerkleTime, newcfg.VerkleTime, headTimestamp) {
 		return newTimestampCompatError("Verkle fork timestamp", c.VerkleTime, newcfg.VerkleTime)
 	}
+	if isForkTimestampIncompatible(c.BPO1Time, newcfg.BPO1Time, headTimestamp) {
+		return newTimestampCompatError("BPO1 fork timestamp", c.BPO1Time, newcfg.BPO1Time)
+	}
+	if isForkTimestampIncompatible(c.BPO2Time, newcfg.BPO2Time, headTimestamp) {
+		return newTimestampCompatError("BPO2 fork timestamp", c.BPO2Time, newcfg.BPO2Time)
+	}
+	if isForkTimestampIncompatible(c.BPO3Time, newcfg.BPO3Time, headTimestamp) {
+		return newTimestampCompatError("BPO3 fork timestamp", c.BPO3Time, newcfg.BPO3Time)
+	}
+	if isForkTimestampIncompatible(c.BPO4Time, newcfg.BPO4Time, headTimestamp) {
+		return newTimestampCompatError("BPO4 fork timestamp", c.BPO4Time, newcfg.BPO4Time)
+	}
+	if isForkTimestampIncompatible(c.BPO5Time, newcfg.BPO5Time, headTimestamp) {
+		return newTimestampCompatError("BPO5 fork timestamp", c.BPO5Time, newcfg.BPO5Time)
+	}
 	return nil
 }
 
@@ -1670,6 +1730,40 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 	default:
 		return forks.Paris
 	}
+}
+
+// BlobConfig returns the blob config associated with the provided fork.
+func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
+	switch fork {
+	case forks.Osaka:
+		return DefaultOsakaBlobConfig
+	case forks.Prague:
+		return DefaultPragueBlobConfig
+	case forks.Cancun:
+		return DefaultCancunBlobConfig
+	default:
+		return nil
+	}
+}
+
+// ActiveSystemContracts returns the currently active system contracts at the
+// given timestamp.
+func (c *ChainConfig) ActiveSystemContracts(time uint64) map[string]common.Address {
+	fork := c.LatestFork(time)
+	active := make(map[string]common.Address)
+	if fork >= forks.Osaka {
+		// no new system contracts
+	}
+	if fork >= forks.Prague {
+		active["CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS"] = ConsolidationQueueAddress
+		active["DEPOSIT_CONTRACT_ADDRESS"] = c.DepositContractAddress
+		active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
+		active["WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS"] = WithdrawalQueueAddress
+	}
+	if fork >= forks.Cancun {
+		active["BEACON_ROOTS_ADDRESS"] = BeaconRootsAddress
+	}
+	return active
 }
 
 // Timestamp returns the timestamp associated with the fork or returns nil if

@@ -129,6 +129,7 @@ var (
 		"jammy",    // 22.04, EOL: 04/2032
 		"noble",    // 24.04, EOL: 04/2034
 		"oracular", // 24.10, EOL: 07/2025
+		"plucky",   // 25.04, EOL: 01/2026
 	}
 
 	// This is where the tests should be unpacked.
@@ -346,7 +347,7 @@ func doTest(cmdline []string) {
 // downloadSpecTestFixtures downloads and extracts the execution-spec-tests fixtures.
 func downloadSpecTestFixtures(csdb *download.ChecksumDB, cachedir string) string {
 	ext := ".tar.gz"
-	base := "fixtures_develop"
+	base := "fixtures_fusaka-devnet-3"
 	archivePath := filepath.Join(cachedir, base+ext)
 	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
 		log.Fatal(err)
@@ -355,10 +356,6 @@ func downloadSpecTestFixtures(csdb *download.ChecksumDB, cachedir string) string
 		log.Fatal(err)
 	}
 	return filepath.Join(cachedir, base)
-}
-
-// doCheckTidy assets that the Go modules files are tidied already.
-func doCheckTidy() {
 }
 
 // doCheckGenerate ensures that re-generating generated files does not cause

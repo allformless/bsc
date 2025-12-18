@@ -18,7 +18,7 @@
 package ethconfig
 
 import (
-	"fmt"
+	"errors"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -240,7 +240,7 @@ func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, ee *et
 	}
 	if config.TerminalTotalDifficulty == nil {
 		log.Error("Geth only supports PoS networks. Please transition legacy networks using Geth v1.13.x.")
-		return nil, fmt.Errorf("'terminalTotalDifficulty' is not set in genesis block")
+		return nil, errors.New("'terminalTotalDifficulty' is not set in genesis block")
 	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {

@@ -119,13 +119,6 @@ func WriteStateID(db ethdb.KeyValueWriter, root common.Hash, id uint64) {
 	}
 }
 
-// DeleteStateID deletes the specified state lookup from the database.
-func DeleteStateID(db ethdb.KeyValueWriter, root common.Hash) {
-	if err := db.Delete(stateIDKey(root)); err != nil {
-		log.Crit("Failed to delete state ID", "err", err)
-	}
-}
-
 // ReadPersistentStateID retrieves the id of the persistent state from the database.
 func ReadPersistentStateID(db ethdb.KeyValueReader) uint64 {
 	data, _ := db.Get(persistentStateIDKey)
@@ -154,14 +147,6 @@ func ReadTrieJournal(db ethdb.KeyValueReader) []byte {
 func WriteTrieJournal(db ethdb.KeyValueWriter, journal []byte) {
 	if err := db.Put(trieJournalKey, journal); err != nil {
 		log.Crit("Failed to store tries journal", "err", err)
-	}
-}
-
-// DeleteTrieJournal deletes the serialized in-memory trie nodes of layers saved at
-// the last shutdown.
-func DeleteTrieJournal(db ethdb.KeyValueWriter) {
-	if err := db.Delete(trieJournalKey); err != nil {
-		log.Crit("Failed to remove tries journal", "err", err)
 	}
 }
 

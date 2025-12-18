@@ -1028,8 +1028,8 @@ func parseDumpConfig(ctx *cli.Context, stack *node.Node, db ethdb.Database) (*st
 		arg := ctx.Args().First()
 		if hashish(arg) {
 			hash := common.HexToHash(arg)
-			if number := rawdb.ReadHeaderNumber(db, hash); number != nil {
-				header = rawdb.ReadHeader(db, hash, *number)
+			if number, ok := rawdb.ReadHeaderNumber(db, hash); ok {
+				header = rawdb.ReadHeader(db, hash, number)
 			} else {
 				return nil, common.Hash{}, fmt.Errorf("block %x not found", hash)
 			}
@@ -1193,7 +1193,7 @@ func pruneHistory(ctx *cli.Context) error {
 	return nil
 }
 
-// downladEra is the era1 file downloader tool.
+// downloadEra is the era1 file downloader tool.
 func downloadEra(ctx *cli.Context) error {
 	flags.CheckExclusive(ctx, eraBlockFlag, eraEpochFlag, eraAllFlag)
 
@@ -1202,7 +1202,7 @@ func downloadEra(ctx *cli.Context) error {
 	if utils.IsNetworkPreset(ctx) {
 		switch {
 		default:
-			return fmt.Errorf("unsupported network, no known era1 checksums")
+			return errors.New("unsupported network, no known era1 checksums")
 		}
 	}
 

@@ -192,10 +192,11 @@ type BlockChainConfig struct {
 	RemoteIncrURL         string // The url to download incremental snapshots
 
 	// Trie database related options
-	TrieCleanLimit   int           // Memory allowance (MB) to use for caching trie nodes in memory
-	TrieDirtyLimit   int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
-	TrieTimeLimit    time.Duration // Time limit after which to flush the current in-memory trie to disk
-	TrieNoAsyncFlush bool          // Whether the asynchronous buffer flushing is disallowed
+	TrieCleanLimit       int           // Memory allowance (MB) to use for caching trie nodes in memory
+	TrieDirtyLimit       int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
+	TrieTimeLimit        time.Duration // Time limit after which to flush the current in-memory trie to disk
+	TrieNoAsyncFlush     bool          // Whether the asynchronous buffer flushing is disallowed
+	TrieJournalDirectory string        // Directory path to the journal used for persisting trie data across node restarts
 
 	Preimages    bool   // Whether to store preimage of trie key to the disk
 	StateHistory uint64 // Number of blocks from head whose state histories are reserved.
@@ -289,6 +290,7 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 			EnableStateIndexing: cfg.ArchiveMode,
 			TrieCleanSize:       cfg.TrieCleanLimit * 1024 * 1024,
 			StateCleanSize:      cfg.SnapshotLimit * 1024 * 1024,
+			JournalDirectory:    cfg.TrieJournalDirectory,
 
 			// TODO(rjl493456442): The write buffer represents the memory limit used
 			// for flushing both trie data and state data to disk. The config name
@@ -884,7 +886,7 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 		predefinedPoint := history.PrunePoints[bc.genesisBlock.Hash()]
 		if predefinedPoint == nil || freezerTail != predefinedPoint.BlockNumber {
 			log.Error("Chain history database is pruned with unknown configuration", "tail", freezerTail)
-			return fmt.Errorf("unexpected database tail")
+			return errors.New("unexpected database tail")
 		}
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
@@ -897,15 +899,15 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 			// action to happen. So just tell them how to do it.
 			log.Error(fmt.Sprintf("Chain history mode is configured as %q, but database is not pruned.", bc.cfg.ChainHistoryMode.String()))
 			log.Error(fmt.Sprintf("Run 'geth prune-history' to prune pre-merge history."))
-			return fmt.Errorf("history pruning requested via configuration")
+			return errors.New("history pruning requested via configuration")
 		}
 		predefinedPoint := history.PrunePoints[bc.genesisBlock.Hash()]
 		if predefinedPoint == nil {
 			log.Error("Chain history pruning is not supported for this network", "genesis", bc.genesisBlock.Hash())
-			return fmt.Errorf("history pruning requested for unknown network")
+			return errors.New("history pruning requested for unknown network")
 		} else if freezerTail > 0 && freezerTail != predefinedPoint.BlockNumber {
 			log.Error("Chain history database is pruned to unknown block", "tail", freezerTail)
-			return fmt.Errorf("unexpected database tail")
+			return errors.New("unexpected database tail")
 		}
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
@@ -2519,7 +2521,10 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	// If we are past Byzantium, enable prefetching to pull in trie node paths
 	// while processing transactions. Before Byzantium the prefetcher is mostly
 	// useless due to the intermediate root hashing after each transaction.
-	var witness *stateless.Witness
+	var (
+		witness      *stateless.Witness
+		witnessStats *stateless.WitnessStats
+	)
 	if bc.chainConfig.IsByzantium(block.Number()) {
 		// Generate witnesses either if we're self-testing, or if it's the
 		// only block being inserted. A bit crude, but witnesses are huge,
@@ -2529,8 +2534,11 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 			if err != nil {
 				return nil, err
 			}
+			if bc.cfg.VmConfig.EnableWitnessStats {
+				witnessStats = stateless.NewWitnessStats()
+			}
 		}
-		statedb.StartPrefetcher("chain", witness)
+		statedb.StartPrefetcher("chain", witness, witnessStats)
 		defer statedb.StopPrefetcher()
 	}
 
@@ -2596,6 +2604,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 			return nil, fmt.Errorf("stateless self-validation receipt root mismatch (cross: %x local: %x)", crossReceiptRoot, block.ReceiptHash())
 		}
 	}
+
 	xvtime := time.Since(xvstart)
 	proctime := time.Since(startTime) // processing + validation + cross validation
 
@@ -2633,6 +2642,11 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	if err != nil {
 		return nil, err
 	}
+	// Report the collected witness statistics
+	if witnessStats != nil {
+		witnessStats.ReportMetrics()
+	}
+
 	// Update the metrics touched during block commit
 	if metrics.EnabledExpensive() {
 		accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
