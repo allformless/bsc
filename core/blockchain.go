@@ -2637,19 +2637,17 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 	proctime := time.Since(startTime) // processing + validation + cross validation
 
 	// Update the metrics touched during block processing and validation
-	if metrics.EnabledExpensive() {
-		accountReadTimer.Update(statedb.AccountReads) // Account reads are complete(in processing)
-		storageReadTimer.Update(statedb.StorageReads) // Storage reads are complete(in processing)
-		if statedb.AccountLoaded != 0 {
-			accountReadSingleTimer.Update(statedb.AccountReads / time.Duration(statedb.AccountLoaded))
-		}
-		if statedb.StorageLoaded != 0 {
-			storageReadSingleTimer.Update(statedb.StorageReads / time.Duration(statedb.StorageLoaded))
-		}
-		accountUpdateTimer.Update(statedb.AccountUpdates) // Account updates are complete(in validation)
-		storageUpdateTimer.Update(statedb.StorageUpdates) // Storage updates are complete(in validation)
-		accountHashTimer.Update(statedb.AccountHashes)    // Account hashes are complete(in validation)
+	accountReadTimer.Update(statedb.AccountReads) // Account reads are complete(in processing)
+	storageReadTimer.Update(statedb.StorageReads) // Storage reads are complete(in processing)
+	if statedb.AccountLoaded != 0 {
+		accountReadSingleTimer.Update(statedb.AccountReads / time.Duration(statedb.AccountLoaded))
 	}
+	if statedb.StorageLoaded != 0 {
+		storageReadSingleTimer.Update(statedb.StorageReads / time.Duration(statedb.StorageLoaded))
+	}
+	accountUpdateTimer.Update(statedb.AccountUpdates)                                 // Account updates are complete(in validation)
+	storageUpdateTimer.Update(statedb.StorageUpdates)                                 // Storage updates are complete(in validation)
+	accountHashTimer.Update(statedb.AccountHashes)                                    // Account hashes are complete(in validation)
 	triehash := statedb.AccountHashes                                                 // The time spent on tries hashing
 	trieUpdate := statedb.AccountUpdates + statedb.StorageUpdates                     // The time spent on tries update
 	blockExecutionTimer.Update(ptime - (statedb.AccountReads + statedb.StorageReads)) // The time spent on EVM processing
@@ -2676,12 +2674,10 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 	}
 
 	// Update the metrics touched during block commit
-	if metrics.EnabledExpensive() {
-		accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
-		storageCommitTimer.Update(statedb.StorageCommits)   // Storage commits are complete, we can mark them
-		snapshotCommitTimer.Update(statedb.SnapshotCommits) // Snapshot commits are complete, we can mark them
-		triedbCommitTimer.Update(statedb.TrieDBCommits)     // Trie database commits are complete, we can mark them
-	}
+	accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
+	storageCommitTimer.Update(statedb.StorageCommits)   // Storage commits are complete, we can mark them
+	snapshotCommitTimer.Update(statedb.SnapshotCommits) // Snapshot commits are complete, we can mark them
+	triedbCommitTimer.Update(statedb.TrieDBCommits)     // Trie database commits are complete, we can mark them
 	blockWriteTimer.Update(time.Since(wstart) - max(statedb.AccountCommits, statedb.StorageCommits) /* concurrent */ - statedb.SnapshotCommits - statedb.TrieDBCommits)
 	elapsed := time.Since(startTime) + 1 // prevent zero division
 	blockInsertTimer.Update(elapsed)

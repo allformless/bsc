@@ -42,6 +42,7 @@ var DeprecatedFlags = []cli.Flag{
 	LogBacktraceAtFlag,
 	LogDebugFlag,
 	MinerNewPayloadTimeoutFlag,
+	MetricsEnabledExpensiveFlag,
 	EnablePersonal,
 	PruneAncientDataFlag,
 }
@@ -112,7 +113,7 @@ var (
 	}
 	MetricsEnabledExpensiveFlag = &cli.BoolFlag{
 		Name:     "metrics.expensive",
-		Hidden:   true,
+		Hidden:   false, // TODO(Nathan): turn it into true in version v1.8.x
 		Usage:    "Enable expensive metrics collection and reporting (deprecated)",
 		Category: flags.DeprecatedCategory,
 	}

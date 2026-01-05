@@ -38,16 +38,6 @@ func Enable() {
 	startMeterTickerLoop()
 }
 
-// EnabledExpensive is checked by functions that are deemed 'expensive'.
-func EnabledExpensive() bool {
-	return metricsExpensiveEnabled
-}
-
-// EnableExpensive enables the expensive metrics.
-func EnableExpensive() {
-	metricsExpensiveEnabled = true
-}
-
 var threadCreateProfile = pprof.Lookup("threadcreate")
 
 type runtimeStats struct {
