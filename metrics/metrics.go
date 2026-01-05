@@ -14,11 +14,6 @@ import (
 
 var (
 	metricsEnabled = false
-
-	// metricsExpensiveEnabled is a soft-flag meant for external packages to check if costly
-	// metrics gathering is allowed or not. The goal is to separate standard metrics
-	// for health monitoring and debug metrics that might impact runtime performance.
-	metricsExpensiveEnabled = false
 )
 
 // Enabled is checked by functions that are deemed 'expensive', e.g. if a
