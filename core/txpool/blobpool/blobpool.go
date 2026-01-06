@@ -1663,6 +1663,7 @@ func (p *BlobPool) preCheck(tx *types.Transaction) error {
 	var (
 		head     = p.head.Load()
 		isOsaka  = p.chain.Config().IsOsaka(head.Number, head.Time)
+		isMendel = p.chain.Config().IsMendel(head.Number, head.Time)
 		deadline time.Time
 	)
 	if isOsaka {
@@ -1674,7 +1675,7 @@ func (p *BlobPool) preCheck(tx *types.Transaction) error {
 		return err
 	}
 	// Before the Osaka fork, reject the blob txs with cell proofs
-	if !isOsaka {
+	if !isOsaka || isMendel { // always true(assuming MendelTime == OsakaTime)
 		if tx.BlobTxSidecar().Version == types.BlobSidecarVersion0 {
 			return nil
 		} else {
