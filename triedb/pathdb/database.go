@@ -713,16 +713,16 @@ func (db *Database) Close() error {
 
 // Size returns the current storage size of the memory cache in front of the
 // persistent database layer.
-func (db *Database) Size() (diffs common.StorageSize, nodes common.StorageSize, immutableNodes common.StorageSize) {
+func (db *Database) Size() (diffs common.StorageSize, nodes common.StorageSize) {
 	db.tree.forEach(func(layer layer) {
 		if diff, ok := layer.(*diffLayer); ok {
 			diffs += common.StorageSize(diff.size())
 		}
 		if disk, ok := layer.(*diskLayer); ok {
-			nodes, immutableNodes = disk.size()
+			nodes += disk.size()
 		}
 	})
-	return diffs, nodes, immutableNodes
+	return diffs, nodes
 }
 
 // Scheme returns the node scheme used in the database.

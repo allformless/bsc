@@ -1573,7 +1573,7 @@ func (bc *BlockChain) Stop() {
 					for !bc.triegc.Empty() {
 						triedb.Dereference(bc.triegc.PopItem())
 					}
-					if _, size, _, _ := triedb.Size(); size != 0 {
+					if _, size, _ := triedb.Size(); size != 0 {
 						log.Error("Dangling trie nodes after full cleanup")
 					}
 				}
@@ -1968,8 +1968,8 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	}
 	// If we exceeded our memory allowance, flush matured singleton nodes to disk
 	var (
-		_, nodes, _, imgs = bc.triedb.Size()
-		limit             = common.StorageSize(bc.cfg.TrieDirtyLimit) * 1024 * 1024
+		_, nodes, imgs = bc.triedb.Size()
+		limit          = common.StorageSize(bc.cfg.TrieDirtyLimit) * 1024 * 1024
 	)
 	if nodes > limit || imgs > 4*1024*1024 {
 		bc.triedb.Cap(limit - ethdb.IdealBatchSize)
@@ -2389,8 +2389,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 		if bc.snaps != nil {
 			snapDiffItems, snapBufItems, _ = bc.snaps.Size()
 		}
-		trieDiffNodes, trieBufNodes, trieImmutableBufNodes, _ := bc.triedb.Size()
-		stats.report(chain, it.index, snapDiffItems, snapBufItems, trieDiffNodes, trieBufNodes, trieImmutableBufNodes, res.status == CanonStatTy)
+		trieDiffNodes, trieBufNodes, _ := bc.triedb.Size()
+		stats.report(chain, it.index, snapDiffItems, snapBufItems, trieDiffNodes, trieBufNodes, res.status == CanonStatTy)
 
 		// Print confirmation that a future fork is scheduled, but not yet active.
 		bc.logForkReadiness(block)
