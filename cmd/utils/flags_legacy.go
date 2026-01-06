@@ -45,6 +45,7 @@ var DeprecatedFlags = []cli.Flag{
 	MetricsEnabledExpensiveFlag,
 	EnablePersonal,
 	PruneAncientDataFlag,
+	JournalFileFlag,
 }
 
 var (
@@ -129,6 +130,13 @@ var (
 		Name:     "pruneancient",
 		Hidden:   true,
 		Usage:    "Prune ancient data, is an optional config and disabled by default. Only keep the latest 9w blocks' data,the older blocks' data will be permanently pruned. Notice:the geth/chaindata/ancient dir will be removed, if restart without the flag, the ancient data will start with the previous point that the oldest unpruned block number. Recommends to the user who don't care about the ancient data.",
+		Category: flags.DeprecatedCategory,
+	}
+	JournalFileFlag = &cli.BoolFlag{
+		Name:     "journalfile",
+		Hidden:   false, // TODO(Nathan): turn it into true in version v1.8.x
+		Usage:    "Enable using journal file to store the TrieJournal instead of KVDB in pbss (default = true, deprecated)",
+		Value:    true,
 		Category: flags.DeprecatedCategory,
 	}
 )

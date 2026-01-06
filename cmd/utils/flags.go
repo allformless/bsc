@@ -397,12 +397,6 @@ var (
 		Value:    false,
 		Category: flags.StateCategory,
 	}
-	JournalFileFlag = &cli.BoolFlag{
-		Name:     "journalfile",
-		Usage:    "Enable using journal file to store the TrieJournal instead of KVDB in pbss (default = true)",
-		Value:    true,
-		Category: flags.StateCategory,
-	}
 	StateSizeTrackingFlag = &cli.BoolFlag{
 		Name:     "state.size-tracking",
 		Usage:    "Enable state size tracking, retrieve state size with debug_stateSize.",
@@ -3017,7 +3011,6 @@ func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, p
 	}
 	pathConfig.JournalDirectory = stack.ResolvePath("triedb")
 	config.PathDB = &pathConfig
-	// TODO(Nathan): delete JournalFilePath ?
 	config.PathDB.JournalFilePath = fmt.Sprintf("%s/%s", stack.ResolvePath("chaindata"), eth.JournalFileName)
 	return triedb.NewDatabase(disk, config)
 }
