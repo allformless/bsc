@@ -109,9 +109,6 @@ func (c *Config) fields() []interface{} {
 	if c.ReadOnly {
 		list = append(list, "readonly", true)
 	}
-	if c.SnapshotNoBuild {
-		list = append(list, "snapshot", false)
-	}
 	list = append(list, "triecache", common.StorageSize(c.TrieCleanSize))
 	list = append(list, "statecache", common.StorageSize(c.StateCleanSize))
 	list = append(list, "buffer", common.StorageSize(c.WriteBufferSize))

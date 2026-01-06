@@ -725,11 +725,6 @@ func (db *Database) Size() (diffs common.StorageSize, nodes common.StorageSize) 
 	return diffs, nodes
 }
 
-// Scheme returns the node scheme used in the database.
-func (db *Database) Scheme() string {
-	return rawdb.PathScheme
-}
-
 // Head return the top non-fork difflayer/disklayer root hash for rewinding.
 func (db *Database) Head() common.Hash {
 	db.lock.Lock()
