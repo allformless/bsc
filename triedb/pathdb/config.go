@@ -82,7 +82,6 @@ type Config struct {
 	NoAsyncGeneration bool // Flag whether the background generation is disabled
 
 	JournalFilePath string // The path of journal file
-	JournalFile     bool   // Flag whether store memory diffLayer into file
 
 	EnableIncr      bool   // Flag whether the freezer db stores incr block and state history
 	MergeIncr       bool   // Flag to merge incr snapshots

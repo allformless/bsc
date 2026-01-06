@@ -134,7 +134,7 @@ type Config struct {
 	// consistent with persistent state.
 	StateScheme        string `toml:",omitempty"` // State scheme used to store ethereum state and merkle trie nodes on top
 	PathSyncFlush      bool   `toml:",omitempty"` // State scheme used to store ethereum state and merkle trie nodes on top
-	JournalFileEnabled bool   // Whether the TrieJournal is stored using journal file
+	JournalFileEnabled bool   // TODO(Nathan): deprecated, will delete together with JournalFileFlag in v1.8.x
 
 	DisableTxIndexer bool `toml:",omitempty"` // Whether to enable the transaction indexer
 

@@ -2205,8 +2205,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.PathSyncFlush = true
 	}
 
-	cfg.JournalFileEnabled = ctx.Bool(JournalFileFlag.Name)
-
 	if ctx.String(GCModeFlag.Name) == "archive" {
 		if cfg.TransactionHistory != 0 {
 			cfg.TransactionHistory = 0
