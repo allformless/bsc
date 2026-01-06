@@ -80,16 +80,6 @@ type Config struct {
 	SnapshotNoBuild   bool // Flag Whether the state generation is disabled
 	NoAsyncFlush      bool // Flag whether the background buffer flushing is disabled
 	NoAsyncGeneration bool // Flag whether the background generation is disabled
-
-	JournalFilePath string // The path of journal file
-	JournalFile     bool   // Flag whether store memory diffLayer into file
-
-	EnableIncr      bool   // Flag whether the freezer db stores incr block and state history
-	MergeIncr       bool   // Flag to merge incr snapshots
-	IncrHistory     uint64 // Amount of block and state history stored in incr freezer db
-	IncrHistoryPath string // The path to store incr block and chain files
-	IncrStateBuffer uint64 // Maximum memory allowance (in bytes) for incr state buffer
-	IncrKeptBlocks  uint64 // Amount of block kept in incr snapshot
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -108,9 +98,6 @@ func (c *Config) fields() []interface{} {
 	var list []interface{}
 	if c.ReadOnly {
 		list = append(list, "readonly", true)
-	}
-	if c.SnapshotNoBuild {
-		list = append(list, "snapshot", false)
 	}
 	list = append(list, "triecache", common.StorageSize(c.TrieCleanSize))
 	list = append(list, "statecache", common.StorageSize(c.StateCleanSize))

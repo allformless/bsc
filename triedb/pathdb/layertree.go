@@ -22,7 +22,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/log"
 )
 
 // layerTree is a group of state layers identified by the state root.
@@ -151,10 +150,6 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, block uint6
 	// responsibility to avoid even attempting to insert such a layer.
 	if root == parentRoot {
 		return errors.New("layer cycle")
-	}
-	if tree.get(root) != nil {
-		log.Info("Skip add repeated difflayer", "root", root.String(), "block_id", block)
-		return nil
 	}
 	parent := tree.get(parentRoot)
 	if parent == nil {
@@ -342,72 +337,4 @@ func (tree *layerTree) lookupStorage(accountHash common.Hash, slotHash common.Ha
 		return nil, fmt.Errorf("triedb layer [%#x] missing", tip)
 	}
 	return l, nil
-}
-
-// front return the top non-fork difflayer/disklayer root hash for rewinding.
-func (tree *layerTree) front() common.Hash {
-	tree.lock.RLock()
-	defer tree.lock.RUnlock()
-
-	chain := make(map[common.Hash][]common.Hash)
-	var base common.Hash
-	for _, layer := range tree.layers {
-		switch dl := layer.(type) {
-		case *diskLayer:
-			if dl.stale {
-				log.Info("pathdb top disklayer is stale")
-				return base
-			}
-			base = dl.rootHash()
-		case *diffLayer:
-			if _, ok := chain[dl.parentLayer().rootHash()]; !ok {
-				chain[dl.parentLayer().rootHash()] = make([]common.Hash, 0)
-			}
-			chain[dl.parentLayer().rootHash()] = append(chain[dl.parentLayer().rootHash()], dl.rootHash())
-		default:
-			log.Crit("unsupported layer type")
-		}
-	}
-	if (base == common.Hash{}) {
-		log.Info("pathdb top difflayer is empty")
-		return base
-	}
-	parent := base
-	for {
-		children, ok := chain[parent]
-		if !ok {
-			log.Info("pathdb top difflayer", "root", parent)
-			return parent
-		}
-		if len(children) != 1 {
-			log.Info("pathdb top difflayer is forked", "common ancestor root", parent)
-			return parent
-		}
-		parent = children[0]
-	}
-}
-
-// bottomDiffLayer returns the bottom-most diff layer in this tree.
-// It returns the first diffLayer that is directly built on top of a diskLayer.
-func (tree *layerTree) bottomDiffLayer() *diffLayer {
-	tree.lock.RLock()
-	defer tree.lock.RUnlock()
-
-	bottomDisk := tree.bottom()
-	if bottomDisk == nil {
-		return nil
-	}
-
-	// Find diffLayer that has bottomDisk as parent
-	for _, l := range tree.layers {
-		if dl, ok := l.(*diffLayer); ok {
-			if parent := dl.parentLayer(); parent != nil {
-				if parentDisk, ok := parent.(*diskLayer); ok && parentDisk.rootHash() == bottomDisk.rootHash() {
-					return dl
-				}
-			}
-		}
-	}
-
-	return nil
 }
