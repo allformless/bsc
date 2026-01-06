@@ -799,7 +799,7 @@ func (c *ChainConfig) Description() string {
 	}
 	banner += fmt.Sprintf("Chain ID:  %v (%s)\n", c.ChainID, network)
 	switch {
-	case c.Parlia != nil:
+	case c.IsInBSC():
 		banner += "Consensus: Parlia (proof-of-staked--authority)\n"
 	case c.Ethash != nil:
 		banner += "Consensus: Beacon (proof-of-stake), merged from Ethash (proof-of-work)\n"
@@ -821,7 +821,7 @@ func (c *ChainConfig) String() string {
 		engine = c.Ethash
 	case c.Clique != nil:
 		engine = c.Clique
-	case c.Parlia != nil:
+	case c.IsInBSC():
 		engine = c.Parlia
 	default:
 		engine = "unknown"
@@ -1335,6 +1335,14 @@ func (c *ChainConfig) IsOnPrague(currentBlockNumber *big.Int, lastBlockTime uint
 	return !c.IsPrague(lastBlockNumber, lastBlockTime) && c.IsPrague(currentBlockNumber, currentBlockTime)
 }
 
+func (c *ChainConfig) IsInBSC() bool {
+	return c.Parlia != nil
+}
+
+func (c *ChainConfig) IsNotInBSC() bool {
+	return c.Parlia == nil
+}
+
 // IsLorentz returns whether time is either equal to the Lorentz fork time or greater.
 func (c *ChainConfig) IsLorentz(num *big.Int, time uint64) bool {
 	return c.IsLondon(num) && isTimestampForked(c.LorentzTime, time)
@@ -1488,7 +1496,7 @@ func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64, time u
 // to guarantee that forks can be implemented in a different order than on official networks
 func (c *ChainConfig) CheckConfigForkOrder() error {
 	// skip checking for non-Parlia egine
-	if c.Parlia == nil {
+	if c.IsNotInBSC() {
 		return nil
 	}
 	type fork struct {

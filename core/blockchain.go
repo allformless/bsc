@@ -1658,7 +1658,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	}
 	// check DA after cancun
 	lastBlk := blockChain[len(blockChain)-1]
-	if bc.chainConfig.Parlia != nil && bc.chainConfig.IsCancun(lastBlk.Number(), lastBlk.Time()) {
+	if bc.chainConfig.IsInBSC() && bc.chainConfig.IsCancun(lastBlk.Number(), lastBlk.Time()) {
 		if _, err := CheckDataAvailableInBatch(bc, blockChain); err != nil {
 			log.Debug("CheckDataAvailableInBatch", "err", err)
 			return 0, err
@@ -2204,7 +2204,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	}()
 
 	// check block data available first
-	if bc.chainConfig.Parlia != nil {
+	if bc.chainConfig.IsInBSC() {
 		if index, err := CheckDataAvailableInBatch(bc, chain); err != nil {
 			return nil, index, err
 		}

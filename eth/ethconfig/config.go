@@ -260,7 +260,7 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, ee *ethapi.BlockChainAPI, genesisHash common.Hash) (consensus.Engine, error) {
-	if config.Parlia != nil {
+	if config.IsInBSC() {
 		return parlia.New(config, db, ee, genesisHash), nil
 	}
 	if config.TerminalTotalDifficulty == nil {
