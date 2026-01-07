@@ -1847,7 +1847,7 @@ func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
 		return c.BlobScheduleConfig.BPO1
 	case forks.Osaka:
 		return c.BlobScheduleConfig.Osaka
-	case forks.Prague:
+	case forks.Fermi, forks.Maxwell, forks.Lorentz, forks.Prague:
 		return c.BlobScheduleConfig.Prague
 	case forks.Cancun:
 		return c.BlobScheduleConfig.Cancun
@@ -1863,6 +1863,12 @@ func (c *ChainConfig) ActiveSystemContracts(time uint64) map[string]common.Addre
 	active := make(map[string]common.Address)
 	if fork >= forks.Osaka {
 		// no new system contracts
+	}
+	if c.IsInBSC() {
+		if fork >= forks.Prague {
+			active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
+		}
+		return active
 	}
 	if fork >= forks.Prague {
 		active["CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS"] = ConsolidationQueueAddress
