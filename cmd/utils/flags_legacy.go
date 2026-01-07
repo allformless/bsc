@@ -114,7 +114,7 @@ var (
 	}
 	MetricsEnabledExpensiveFlag = &cli.BoolFlag{
 		Name:     "metrics.expensive",
-		Hidden:   false, // TODO(Nathan): turn it into true in version v1.8.x
+		Hidden:   true,
 		Usage:    "Enable expensive metrics collection and reporting (deprecated)",
 		Category: flags.DeprecatedCategory,
 	}
@@ -134,7 +134,7 @@ var (
 	}
 	JournalFileFlag = &cli.BoolFlag{
 		Name:     "journalfile",
-		Hidden:   false, // TODO(Nathan): turn it into true in version v1.8.x
+		Hidden:   true,
 		Usage:    "Enable using journal file to store the TrieJournal instead of KVDB in pbss (default = true, deprecated)",
 		Value:    true,
 		Category: flags.DeprecatedCategory,
