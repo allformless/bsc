@@ -2071,7 +2071,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		chainID = new(big.Int)
 	}
 	// disallow setting Merge out of order
-	isMerge = isMerge && c.IsLondon(num) || c.IsInBSC()
+	isMerge = isMerge && c.IsLondon(num) // always false in BSC
 	isVerkle := isMerge && c.IsVerkle(num, timestamp)
 	return Rules{
 		ChainID:          new(big.Int).Set(chainID),
@@ -2094,20 +2094,20 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsPlato:          c.IsPlato(num),
 		IsHertz:          c.IsHertz(num),
 		IsHertzfix:       c.IsHertzfix(num),
-		IsShanghai:       isMerge && c.IsShanghai(num, timestamp),
+		IsShanghai:       (isMerge || c.IsInBSC()) && c.IsShanghai(num, timestamp),
 		IsKepler:         c.IsKepler(num, timestamp),
 		IsFeynman:        c.IsFeynman(num, timestamp),
-		IsCancun:         isMerge && c.IsCancun(num, timestamp),
+		IsCancun:         (isMerge || c.IsInBSC()) && c.IsCancun(num, timestamp),
 		IsHaber:          c.IsHaber(num, timestamp),
 		IsBohr:           c.IsBohr(num, timestamp),
 		IsPascal:         c.IsPascal(num, timestamp),
-		IsPrague:         isMerge && c.IsPrague(num, timestamp),
+		IsPrague:         (isMerge || c.IsInBSC()) && c.IsPrague(num, timestamp),
 		IsLorentz:        c.IsLorentz(num, timestamp),
 		IsMaxwell:        c.IsMaxwell(num, timestamp),
 		IsFermi:          c.IsFermi(num, timestamp),
-		IsOsaka:          isMerge && c.IsOsaka(num, timestamp),
+		IsOsaka:          (isMerge || c.IsInBSC()) && c.IsOsaka(num, timestamp),
 		IsMendel:         c.IsMendel(num, timestamp),
-		IsAmsterdam:      isMerge && c.IsAmsterdam(num, timestamp),
+		IsAmsterdam:      (isMerge || c.IsInBSC()) && c.IsAmsterdam(num, timestamp),
 		IsVerkle:         c.IsVerkle(num, timestamp),
 		IsEIP4762:        isVerkle,
 	}
