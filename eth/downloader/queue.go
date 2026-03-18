@@ -842,7 +842,7 @@ func (q *queue) DeliverBodies(id string, hashes eth.BlockBodyHashes, bodies []et
 		if bodies[index].Sidecars != nil {
 			sidecars, err := bodies[index].Sidecars.Items()
 			if err != nil {
-				return fmt.Errorf("%w: bad withdrawals: %v", errInvalidBody, err)
+				return fmt.Errorf("%w: bad sidecars: %v", errInvalidBody, err)
 			}
 			for _, sidecar := range sidecars {
 				if err := sidecar.SanityCheck(header.Number, header.Hash()); err != nil {
