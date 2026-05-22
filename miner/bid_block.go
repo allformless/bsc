@@ -60,7 +60,7 @@ func (w *worker) selectBidBlock(bidBlock *types.DecodedBidBlock, simBidBlockRewa
 		"simBidBlockReward", simBidBR,
 		"simBidValidatorReward", simBidVR)
 
-	if bidBlockFee.Cmp(bestReward) <= 0 {
+	if bidBlockFee.Cmp(bestReward) > 0 {
 		log.Info("[BID BLOCK selected]",
 			"block", blockNum,
 			"builder", bidBlock.Builder,
